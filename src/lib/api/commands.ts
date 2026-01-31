@@ -144,3 +144,28 @@ export async function getLatestMovies(
     limit,
   });
 }
+
+/**
+ * Update info from GitHub releases
+ */
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  download_url: string | null;
+  release_notes: string | null;
+}
+
+/**
+ * Check for app updates
+ */
+export async function checkForUpdates(): Promise<UpdateInfo> {
+  return await invoke<UpdateInfo>("check_for_updates");
+}
+
+/**
+ * Get current app version
+ */
+export async function getAppVersion(): Promise<string> {
+  return await invoke<string>("get_app_version");
+}

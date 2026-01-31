@@ -10,7 +10,7 @@ mod yts;
 
 use commands::{
     get_movie_details, get_movie_rating, get_movie_suggestions, list_movies, start_stream,
-    get_stream_status, stop_stream, TorrentManagerState,
+    get_stream_status, stop_stream, check_for_updates, get_app_version, TorrentManagerState,
 };
 use omdb::OmdbClient;
 use torrent::TorrentManager;
@@ -85,6 +85,8 @@ pub fn run() {
             start_stream,
             get_stream_status,
             stop_stream,
+            check_for_updates,
+            get_app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

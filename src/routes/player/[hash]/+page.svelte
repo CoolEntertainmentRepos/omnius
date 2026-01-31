@@ -728,13 +728,20 @@
     background: rgba(255, 255, 255, 0.1);
   }
 
-  .control-btn:focus {
+  .control-btn:focus,
+  .control-btn:focus-visible {
     outline: none;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(229, 9, 20, 0.4);
+    box-shadow: 0 0 0 3px #e50914;
+    transform: scale(1.15);
   }
 
   .control-btn.active {
     color: #e50914;
+  }
+
+  .control-btn.active:focus {
+    background: rgba(229, 9, 20, 0.5);
   }
 
   .control-btn svg {

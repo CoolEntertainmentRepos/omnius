@@ -70,6 +70,7 @@
             class="movie-card"
             onclick={() => handleMovieClick(movie)}
             onkeydown={(e) => e.key === 'Enter' && handleMovieClick(movie)}
+            onfocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })}
             role="button"
             tabindex="0"
             aria-label="View {movie.title}"
@@ -215,14 +216,16 @@
     z-index: 20;
   }
 
-  .movie-card:focus {
+  .movie-card:focus,
+  .movie-card:focus-visible {
     outline: none;
-    transform: scale(1.08);
+    transform: scale(1.1);
     z-index: 20;
   }
 
-  .movie-card:focus .card-poster {
-    box-shadow: 0 0 0 4px #fff;
+  .movie-card:focus .card-poster,
+  .movie-card:focus-visible .card-poster {
+    box-shadow: 0 0 0 4px #e50914, 0 8px 30px rgba(229, 9, 20, 0.5);
   }
 
   .card-poster {

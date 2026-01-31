@@ -5,14 +5,17 @@ use tokio::sync::RwLock;
 
 mod commands;
 mod omdb;
+mod subtitles;
 mod torrent;
 mod yts;
 
 use commands::{
     get_movie_details, get_movie_rating, get_movie_suggestions, list_movies, start_stream,
-    get_stream_status, stop_stream, check_for_updates, get_app_version, TorrentManagerState,
+    get_stream_status, stop_stream, check_for_updates, get_app_version, search_subtitles,
+    get_subtitle_languages, TorrentManagerState,
 };
 use omdb::OmdbClient;
+use subtitles::SubtitleClient;
 use torrent::TorrentManager;
 use yts::YtsClient;
 
@@ -20,12 +23,14 @@ use yts::YtsClient;
 pub fn run() {
     let yts_client = YtsClient::new();
     let omdb_client = OmdbClient::new();
+    let subtitle_client = SubtitleClient::new();
     let torrent_manager: TorrentManagerState = Arc::new(RwLock::new(None));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(yts_client)
         .manage(omdb_client)
+        .manage(subtitle_client)
         .manage(torrent_manager.clone())
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -87,6 +92,8 @@ pub fn run() {
             stop_stream,
             check_for_updates,
             get_app_version,
+            search_subtitles,
+            get_subtitle_languages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

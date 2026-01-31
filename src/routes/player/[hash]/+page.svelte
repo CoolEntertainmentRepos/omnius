@@ -4,6 +4,7 @@
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import { streamStore } from "$lib/stores/stream.svelte";
+  import { searchSubtitles, type Subtitle } from "$lib/api/commands";
 
   let hash = $derived($page.params.hash || "");
   let title = $derived($page.url.searchParams.get("title") || "Movie");
@@ -21,9 +22,10 @@
   let isMuted = $state(false);
   let isFullscreen = $state(false);
   let isBuffering = $state(true);
-  let subtitles = $state<{ label: string; src: string; lang: string }[]>([]);
-  let activeSubtitle = $state<string | null>(null);
+  let availableSubtitles = $state<Subtitle[]>([]);
+  let activeSubtitle = $state<Subtitle | null>(null);
   let showSubtitleMenu = $state(false);
+  let subtitlesLoading = $state(false);
   let error = $state<string | null>(null);
 
   // Use URL param first, then store, then fallback
@@ -61,18 +63,29 @@
   });
 
   async function fetchSubtitles(imdb: string) {
+    subtitlesLoading = true;
     try {
-      // Using YIFY subtitles API (or OpenSubtitles)
-      const response = await fetch(
-        `https://yifysubtitles.ch/movie-imdb/${imdb}`
-      );
-      // This is a placeholder - in production you'd parse the actual API response
-      // For now, we'll set up the structure for subtitles
-      subtitles = [];
+      const result = await searchSubtitles(imdb);
+      availableSubtitles = result.subtitles;
+      console.log(`[Player] Found ${result.total_count} subtitles`);
     } catch (err) {
       console.error("Failed to fetch subtitles:", err);
+    } finally {
+      subtitlesLoading = false;
     }
   }
+
+  // Group subtitles by language for the menu
+  const subtitlesByLanguage = $derived(() => {
+    const grouped: Record<string, Subtitle[]> = {};
+    for (const sub of availableSubtitles) {
+      if (!grouped[sub.language_name]) {
+        grouped[sub.language_name] = [];
+      }
+      grouped[sub.language_name].push(sub);
+    }
+    return grouped;
+  });
 
   function resetControlsTimeout() {
     clearTimeout(controlsTimeout);
@@ -212,26 +225,9 @@
     if (volume > 0) isMuted = false;
   }
 
-  function handleSubtitleSelect(lang: string | null) {
-    activeSubtitle = lang;
-    showSubtitleMenu = false;
-
-    if (videoElement) {
-      // Remove existing tracks
-      const tracks = videoElement.querySelectorAll("track");
-      tracks.forEach((track) => {
-        (track as HTMLTrackElement).track.mode = "hidden";
-      });
-
-      // Enable selected track
-      if (lang) {
-        const track = videoElement.querySelector(`track[srclang="${lang}"]`) as HTMLTrackElement;
-        if (track) {
-          track.track.mode = "showing";
-        }
-      }
-    }
-  }
+  // Note: Subtitle download and display would require downloading the VTT/SRT file
+  // and either serving it locally or converting it. For now, we show available subtitles
+  // and could integrate with a subtitle download service in the future.
 
   function handleBack() {
     // Stop stream and go back
@@ -416,24 +412,36 @@
               </button>
               {#if showSubtitleMenu}
                 <div class="subtitle-menu">
+                  <div class="subtitle-menu-header">Subtitles</div>
                   <button
                     class="subtitle-option"
                     class:selected={activeSubtitle === null}
-                    onclick={() => handleSubtitleSelect(null)}
+                    onclick={() => { activeSubtitle = null; showSubtitleMenu = false; }}
                   >
                     Off
                   </button>
-                  {#each subtitles as sub (sub.lang)}
-                    <button
-                      class="subtitle-option"
-                      class:selected={activeSubtitle === sub.lang}
-                      onclick={() => handleSubtitleSelect(sub.lang)}
-                    >
-                      {sub.label}
-                    </button>
-                  {/each}
-                  {#if subtitles.length === 0}
-                    <span class="no-subtitles">No subtitles available</span>
+                  {#if subtitlesLoading}
+                    <span class="no-subtitles">Loading...</span>
+                  {:else if availableSubtitles.length === 0}
+                    <span class="no-subtitles">No subtitles found</span>
+                  {:else}
+                    {#each Object.entries(subtitlesByLanguage()) as [lang, subs] (lang)}
+                      <div class="subtitle-lang-group">
+                        <span class="subtitle-lang-label">{lang}</span>
+                        {#each subs.slice(0, 3) as sub (sub.id)}
+                          <button
+                            class="subtitle-option"
+                            class:selected={activeSubtitle?.id === sub.id}
+                            onclick={() => { activeSubtitle = sub; showSubtitleMenu = false; }}
+                          >
+                            <span class="sub-release">{sub.release_name || lang}</span>
+                            {#if sub.hearing_impaired}
+                              <span class="sub-hi">CC</span>
+                            {/if}
+                          </button>
+                        {/each}
+                      </div>
+                    {/each}
                   {/if}
                 </div>
               {/if}
@@ -797,21 +805,53 @@
     position: absolute;
     bottom: 60px;
     right: 0;
-    background: rgba(20, 20, 20, 0.95);
-    border-radius: 8px;
-    padding: 8px 0;
-    min-width: 150px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    background: rgba(20, 20, 20, 0.98);
+    border-radius: 12px;
+    padding: 0 0 8px;
+    min-width: 280px;
+    max-width: 350px;
+    max-height: 400px;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .subtitle-menu-header {
+    padding: 12px 20px 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 8px;
+  }
+
+  .subtitle-lang-group {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+  }
+
+  .subtitle-lang-label {
+    display: block;
+    padding: 8px 20px 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #e50914;
+    text-transform: uppercase;
   }
 
   .subtitle-option {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     width: 100%;
-    padding: 12px 20px;
+    padding: 10px 20px 10px 32px;
     background: none;
     border: none;
     color: #fff;
-    font-size: 1rem;
+    font-size: 0.95rem;
     text-align: left;
     cursor: pointer;
     transition: background 0.2s ease;
@@ -821,8 +861,30 @@
     background: rgba(255, 255, 255, 0.1);
   }
 
+  .subtitle-option:focus,
+  .subtitle-option:focus-visible {
+    outline: none;
+    background: rgba(229, 9, 20, 0.3);
+  }
+
   .subtitle-option.selected {
     color: #e50914;
+  }
+
+  .sub-release {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
+
+  .sub-hi {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    color: #fff;
   }
 
   .no-subtitles {

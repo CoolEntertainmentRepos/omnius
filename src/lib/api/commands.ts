@@ -169,3 +169,42 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 export async function getAppVersion(): Promise<string> {
   return await invoke<string>("get_app_version");
 }
+
+/**
+ * Subtitle types
+ */
+export interface Subtitle {
+  id: string;
+  language: string;
+  language_name: string;
+  download_url: string;
+  release_name: string | null;
+  uploader: string | null;
+  download_count: number;
+  hearing_impaired: boolean;
+  fps: number | null;
+}
+
+export interface SubtitleSearchResult {
+  subtitles: Subtitle[];
+  total_count: number;
+}
+
+export interface SubtitleLanguage {
+  code: string;
+  name: string;
+}
+
+/**
+ * Search for subtitles by IMDB ID
+ */
+export async function searchSubtitles(imdbId: string): Promise<SubtitleSearchResult> {
+  return await invoke<SubtitleSearchResult>("search_subtitles", { imdbId });
+}
+
+/**
+ * Get available subtitle languages
+ */
+export async function getSubtitleLanguages(): Promise<SubtitleLanguage[]> {
+  return await invoke<SubtitleLanguage[]>("get_subtitle_languages");
+}

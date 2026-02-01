@@ -67,11 +67,18 @@
 
       const update = await check();
       if (update) {
+        let totalSize = 0;
+        let downloaded = 0;
         await update.downloadAndInstall((event) => {
-          if (event.event === "Started" && event.data.contentLength) {
+          if (event.event === "Started") {
+            totalSize = (event.data as { contentLength?: number }).contentLength || 0;
+            downloaded = 0;
             downloadProgress = 0;
           } else if (event.event === "Progress") {
-            downloadProgress = Math.round((event.data.chunkLength / (event.data.contentLength || 1)) * 100);
+            downloaded += (event.data as { chunkLength: number }).chunkLength;
+            if (totalSize > 0) {
+              downloadProgress = Math.round((downloaded / totalSize) * 100);
+            }
           } else if (event.event === "Finished") {
             downloadProgress = 100;
           }

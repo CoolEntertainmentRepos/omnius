@@ -164,15 +164,27 @@ if [ -f "$APK_ARM64" ]; then
 fi
 
 # ============================================
-# Desktop Builds
+# Desktop Builds (with Tauri Updater signing)
 # ============================================
 echo -e "\n${BLUE}=== Building Desktop Apps ===${NC}"
+
+# Set up signing for Tauri Updater
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/streamer.key)
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+
+GITHUB_REPO_URL="https://github.com/flakerim/Streamer/releases/download/v${VERSION}"
+
+# Initialize manifest platforms
+declare -A MANIFEST_PLATFORMS
 
 # macOS (Apple Silicon)
 echo -e "${YELLOW}Building macOS (Apple Silicon)...${NC}"
 pnpm tauri build --target aarch64-apple-darwin 2>&1 | tail -5
 
 DMG_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
+TARGZ_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -name "*.tar.gz" 2>/dev/null | head -1)
+SIG_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -name "*.tar.gz.sig" 2>/dev/null | head -1)
+
 if [ -f "$DMG_ARM64" ]; then
     MACOS_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-macos-arm64.dmg"
     cp "$DMG_ARM64" "$MACOS_ARM64"
@@ -180,11 +192,23 @@ if [ -f "$DMG_ARM64" ]; then
     RELEASE_FILES+=("$MACOS_ARM64")
 fi
 
+if [ -f "$TARGZ_ARM64" ] && [ -f "$SIG_ARM64" ]; then
+    MACOS_ARM64_UPDATE="$RELEASE_DIR/Streamer-v${VERSION}-macos-arm64.app.tar.gz"
+    cp "$TARGZ_ARM64" "$MACOS_ARM64_UPDATE"
+    RELEASE_FILES+=("$MACOS_ARM64_UPDATE")
+    SIG_CONTENT=$(cat "$SIG_ARM64")
+    MANIFEST_PLATFORMS["darwin-aarch64"]="{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-arm64.app.tar.gz\"}"
+    echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-arm64.app.tar.gz${NC}"
+fi
+
 # macOS (Intel)
 echo -e "${YELLOW}Building macOS (Intel x64)...${NC}"
 pnpm tauri build --target x86_64-apple-darwin 2>&1 | tail -5
 
 DMG_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
+TARGZ_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -name "*.tar.gz" 2>/dev/null | head -1)
+SIG_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -name "*.tar.gz.sig" 2>/dev/null | head -1)
+
 if [ -f "$DMG_X64" ]; then
     MACOS_X64="$RELEASE_DIR/Streamer-v${VERSION}-macos-x64.dmg"
     cp "$DMG_X64" "$MACOS_X64"
@@ -192,13 +216,40 @@ if [ -f "$DMG_X64" ]; then
     RELEASE_FILES+=("$MACOS_X64")
 fi
 
-# Windows (cross-compile from macOS - requires additional setup)
-# echo -e "${YELLOW}Building Windows (x64)...${NC}"
-# pnpm tauri build --target x86_64-pc-windows-msvc 2>&1 | tail -5
+if [ -f "$TARGZ_X64" ] && [ -f "$SIG_X64" ]; then
+    MACOS_X64_UPDATE="$RELEASE_DIR/Streamer-v${VERSION}-macos-x64.app.tar.gz"
+    cp "$TARGZ_X64" "$MACOS_X64_UPDATE"
+    RELEASE_FILES+=("$MACOS_X64_UPDATE")
+    SIG_CONTENT=$(cat "$SIG_X64")
+    MANIFEST_PLATFORMS["darwin-x86_64"]="{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-x64.app.tar.gz\"}"
+    echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-x64.app.tar.gz${NC}"
+fi
 
-# Linux (cross-compile from macOS - requires additional setup)
-# echo -e "${YELLOW}Building Linux (x64)...${NC}"
-# pnpm tauri build --target x86_64-unknown-linux-gnu 2>&1 | tail -5
+# Generate latest.json manifest for Tauri Updater
+echo -e "${YELLOW}Generating updater manifest...${NC}"
+PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+PLATFORMS_JSON=""
+for platform in "${!MANIFEST_PLATFORMS[@]}"; do
+    if [ -n "$PLATFORMS_JSON" ]; then
+        PLATFORMS_JSON="$PLATFORMS_JSON,"
+    fi
+    PLATFORMS_JSON="$PLATFORMS_JSON\"$platform\":${MANIFEST_PLATFORMS[$platform]}"
+done
+
+cat > "$RELEASE_DIR/latest.json" <<EOF
+{
+  "version": "${VERSION}",
+  "notes": "Streamer v${VERSION}",
+  "pub_date": "${PUB_DATE}",
+  "platforms": {
+    $PLATFORMS_JSON
+  }
+}
+EOF
+
+RELEASE_FILES+=("$RELEASE_DIR/latest.json")
+echo -e "${GREEN}✓ Generated: latest.json${NC}"
 
 # ============================================
 # Git & GitHub Release

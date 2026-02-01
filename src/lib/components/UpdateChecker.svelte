@@ -5,28 +5,86 @@
   let showModal = $state(false);
   let updateInfo = $state<UpdateInfo | null>(null);
   let checking = $state(true);
+  let installing = $state(false);
+  let downloadProgress = $state(0);
   let error = $state<string | null>(null);
+  let isDesktop = $state(false);
 
   onMount(async () => {
     // Delay check slightly to let app initialize
     await new Promise((r) => setTimeout(r, 2000));
 
+    // Check if we're on desktop (Tauri updater works on desktop only)
     try {
-      const info = await checkForUpdates();
-      updateInfo = info;
-      if (info.update_available) {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      isDesktop = true;
+
+      // Use Tauri's built-in updater for desktop
+      const update = await check();
+      if (update) {
+        updateInfo = {
+          current_version: update.currentVersion,
+          latest_version: update.version,
+          update_available: true,
+          download_url: null,
+          release_notes: update.body || null,
+        };
         showModal = true;
       }
-    } catch (err) {
-      console.error("Failed to check for updates:", err);
-      error = err instanceof Error ? err.message : "Update check failed";
-    } finally {
       checking = false;
+    } catch {
+      // Fallback to manual check (for Android TV or if plugin not available)
+      isDesktop = false;
+      try {
+        const info = await checkForUpdates();
+        updateInfo = info;
+        if (info.update_available) {
+          showModal = true;
+        }
+      } catch (err) {
+        console.error("Failed to check for updates:", err);
+        error = err instanceof Error ? err.message : "Update check failed";
+      } finally {
+        checking = false;
+      }
     }
   });
 
   function dismiss() {
     showModal = false;
+  }
+
+  async function installUpdate() {
+    if (!isDesktop) {
+      openDownload();
+      return;
+    }
+
+    installing = true;
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+
+      const update = await check();
+      if (update) {
+        await update.downloadAndInstall((event) => {
+          if (event.event === "Started" && event.data.contentLength) {
+            downloadProgress = 0;
+          } else if (event.event === "Progress") {
+            downloadProgress = Math.round((event.data.chunkLength / (event.data.contentLength || 1)) * 100);
+          } else if (event.event === "Finished") {
+            downloadProgress = 100;
+          }
+        });
+
+        // Relaunch the app
+        await relaunch();
+      }
+    } catch (err) {
+      console.error("Failed to install update:", err);
+      error = err instanceof Error ? err.message : "Update failed";
+      installing = false;
+    }
   }
 
   function openDownload() {
@@ -55,7 +113,12 @@
           <span class="new">v{updateInfo.latest_version}</span>
         </p>
 
-        {#if updateInfo.release_notes}
+        {#if installing}
+          <div class="progress-container">
+            <div class="progress-bar" style="width: {downloadProgress}%"></div>
+          </div>
+          <p class="progress-text">Downloading update... {downloadProgress}%</p>
+        {:else if updateInfo.release_notes}
           <div class="release-notes">
             <h3>What's New</h3>
             <p>{updateInfo.release_notes}</p>
@@ -63,19 +126,19 @@
         {/if}
       </div>
 
-      <div class="modal-actions">
-        <button class="btn-secondary" onclick={dismiss}>
-          Later
-        </button>
-        {#if updateInfo.download_url}
-          <button class="btn-primary" onclick={openDownload}>
+      {#if !installing}
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick={dismiss}>
+            Later
+          </button>
+          <button class="btn-primary" onclick={installUpdate}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
             </svg>
-            Download Update
+            {isDesktop ? "Install Update" : "Download Update"}
           </button>
-        {/if}
-      </div>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -147,6 +210,27 @@
   .new {
     color: #4ade80;
     font-weight: 600;
+  }
+
+  .progress-container {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+
+  .progress-bar {
+    background: #e50914;
+    height: 100%;
+    transition: width 0.3s ease;
+  }
+
+  .progress-text {
+    text-align: center;
+    color: #888;
+    font-size: 0.95rem;
+    margin: 0;
   }
 
   .release-notes {

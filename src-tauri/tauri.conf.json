@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Streamer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "com.flakerim.streamer",
   "build": {
     "beforeDevCommand": "npm run dev",

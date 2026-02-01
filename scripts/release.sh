@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Release script for Streamer
 # Usage: ./scripts/release.sh [major|minor|patch|VERSION]
@@ -174,8 +174,9 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
 GITHUB_REPO_URL="https://github.com/flakerim/Streamer/releases/download/v${VERSION}"
 
-# Initialize manifest platforms
-declare -A MANIFEST_PLATFORMS
+# Manifest platform entries (will be built up as we go)
+DARWIN_AARCH64_ENTRY=""
+DARWIN_X86_64_ENTRY=""
 
 # macOS (Apple Silicon)
 echo -e "${YELLOW}Building macOS (Apple Silicon)...${NC}"
@@ -197,7 +198,7 @@ if [ -f "$TARGZ_ARM64" ] && [ -f "$SIG_ARM64" ]; then
     cp "$TARGZ_ARM64" "$MACOS_ARM64_UPDATE"
     RELEASE_FILES+=("$MACOS_ARM64_UPDATE")
     SIG_CONTENT=$(cat "$SIG_ARM64")
-    MANIFEST_PLATFORMS["darwin-aarch64"]="{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-arm64.app.tar.gz\"}"
+    DARWIN_AARCH64_ENTRY="\"darwin-aarch64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-arm64.app.tar.gz\"}"
     echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-arm64.app.tar.gz${NC}"
 fi
 
@@ -221,7 +222,7 @@ if [ -f "$TARGZ_X64" ] && [ -f "$SIG_X64" ]; then
     cp "$TARGZ_X64" "$MACOS_X64_UPDATE"
     RELEASE_FILES+=("$MACOS_X64_UPDATE")
     SIG_CONTENT=$(cat "$SIG_X64")
-    MANIFEST_PLATFORMS["darwin-x86_64"]="{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-x64.app.tar.gz\"}"
+    DARWIN_X86_64_ENTRY="\"darwin-x86_64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-x64.app.tar.gz\"}"
     echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-x64.app.tar.gz${NC}"
 fi
 
@@ -229,15 +230,21 @@ fi
 echo -e "${YELLOW}Generating updater manifest...${NC}"
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+# Build platforms JSON
 PLATFORMS_JSON=""
-for platform in "${!MANIFEST_PLATFORMS[@]}"; do
+if [ -n "$DARWIN_AARCH64_ENTRY" ]; then
+    PLATFORMS_JSON="$DARWIN_AARCH64_ENTRY"
+fi
+if [ -n "$DARWIN_X86_64_ENTRY" ]; then
     if [ -n "$PLATFORMS_JSON" ]; then
-        PLATFORMS_JSON="$PLATFORMS_JSON,"
+        PLATFORMS_JSON="$PLATFORMS_JSON,$DARWIN_X86_64_ENTRY"
+    else
+        PLATFORMS_JSON="$DARWIN_X86_64_ENTRY"
     fi
-    PLATFORMS_JSON="$PLATFORMS_JSON\"$platform\":${MANIFEST_PLATFORMS[$platform]}"
-done
+fi
 
-cat > "$RELEASE_DIR/latest.json" <<EOF
+if [ -n "$PLATFORMS_JSON" ]; then
+    cat > "$RELEASE_DIR/latest.json" <<EOF
 {
   "version": "${VERSION}",
   "notes": "Streamer v${VERSION}",
@@ -247,9 +254,11 @@ cat > "$RELEASE_DIR/latest.json" <<EOF
   }
 }
 EOF
-
-RELEASE_FILES+=("$RELEASE_DIR/latest.json")
-echo -e "${GREEN}✓ Generated: latest.json${NC}"
+    RELEASE_FILES+=("$RELEASE_DIR/latest.json")
+    echo -e "${GREEN}✓ Generated: latest.json${NC}"
+else
+    echo -e "${YELLOW}⚠ No desktop builds, skipping latest.json${NC}"
+fi
 
 # ============================================
 # Git & GitHub Release

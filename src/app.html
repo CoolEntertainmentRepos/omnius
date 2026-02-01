@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Streamer</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background: #141414;
+        color: #fff;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* Spatial Navigation focus styles */
+      :focus {
+        outline: 3px solid #e50914 !important;
+        outline-offset: 2px;
+      }
+
+      button:focus,
+      .btn-play:focus,
+      .btn-info:focus,
+      .control-btn:focus,
+      .action-btn:focus {
+        box-shadow: 0 0 0 4px #e50914 !important;
+        transform: scale(1.05);
+        transition: all 0.15s ease;
+      }
+
+      .movie-card:focus {
+        transform: scale(1.08);
+        z-index: 10;
+        transition: all 0.15s ease;
+      }
+
+      .nav-item:focus {
+        background: rgba(229, 9, 20, 0.3) !important;
+        color: #fff !important;
+      }
+    </style>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

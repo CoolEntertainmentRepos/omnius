@@ -15,10 +15,15 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+RELEASE_DIR="$PROJECT_DIR/releases"
+
 # Get current version from tauri.conf.json
-CURRENT_VERSION=$(grep '"version"' src-tauri/tauri.conf.json | head -1 | sed 's/.*: "\(.*\)".*/\1/')
+CURRENT_VERSION=$(grep '"version"' "$PROJECT_DIR/src-tauri/tauri.conf.json" | head -1 | sed 's/.*: "\(.*\)".*/\1/')
 
 if [ -z "$CURRENT_VERSION" ]; then
     echo -e "${RED}Error: Could not determine current version${NC}"
@@ -66,7 +71,9 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}📦 Building Streamer v${VERSION}${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Building Streamer v${VERSION}${NC}"
+echo -e "${GREEN}========================================${NC}"
 
 # Check if gh is installed
 if ! command -v gh &> /dev/null; then
@@ -84,8 +91,17 @@ fi
 
 # Update version in config files
 echo -e "${YELLOW}Updating version to ${VERSION}...${NC}"
-sed -i '' "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" src-tauri/tauri.conf.json
-sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
+sed -i '' "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/tauri.conf.json"
+sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/Cargo.toml"
+
+# Create releases directory
+mkdir -p "$RELEASE_DIR"
+RELEASE_FILES=()
+
+# ============================================
+# Android TV Builds
+# ============================================
+echo -e "\n${BLUE}=== Building Android TV APKs ===${NC}"
 
 # Set up Android build environment
 export JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home
@@ -94,30 +110,20 @@ export ANDROID_NDK_HOME=~/Android/sdk/ndk/27.0.12077973
 export NDK_HOME=$ANDROID_NDK_HOME
 TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64
 export PATH=$TOOLCHAIN/bin:$PATH
+
+# ARM toolchain (32-bit - for older devices like Mi Box)
 export CC_armv7_linux_androideabi=$TOOLCHAIN/bin/armv7a-linux-androideabi24-clang
 export CXX_armv7_linux_androideabi=$TOOLCHAIN/bin/armv7a-linux-androideabi24-clang++
 export AR_armv7_linux_androideabi=$TOOLCHAIN/bin/llvm-ar
 export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$TOOLCHAIN/bin/armv7a-linux-androideabi24-clang
 
-# Build release APK for Android
-echo -e "${YELLOW}Building release APK...${NC}"
-pnpm tauri android build --target armv7
+# ARM64 toolchain (64-bit - for newer devices)
+export CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android24-clang
+export CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android24-clang++
+export AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/bin/aarch64-linux-android24-clang
 
-APK_PATH="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
-SIGNED_APK="streamer-v${VERSION}.apk"
-KEYSTORE="debug.keystore"
-ANDROID_HOME=~/Android/sdk
-
-if [ ! -f "$APK_PATH" ]; then
-    echo -e "${RED}Error: APK not found at ${APK_PATH}${NC}"
-    echo "Trying debug APK..."
-    APK_PATH="src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk"
-fi
-
-if [ ! -f "$APK_PATH" ]; then
-    echo -e "${RED}Error: No APK found${NC}"
-    exit 1
-fi
+KEYSTORE="$PROJECT_DIR/debug.keystore"
 
 # Create debug keystore if it doesn't exist
 if [ ! -f "$KEYSTORE" ]; then
@@ -128,34 +134,94 @@ if [ ! -f "$KEYSTORE" ]; then
         -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, ST=Debug, C=US"
 fi
 
-# Sign the APK
-echo -e "${YELLOW}Signing APK...${NC}"
-$ANDROID_HOME/build-tools/35.0.0/apksigner sign \
-    --ks "$KEYSTORE" \
-    --ks-pass pass:android \
-    --key-pass pass:android \
-    --out "$SIGNED_APK" \
-    "$APK_PATH"
+# Build and sign ARM (32-bit)
+echo -e "${YELLOW}Building Android TV (ARM 32-bit)...${NC}"
+cd "$PROJECT_DIR"
+pnpm tauri android build --target armv7 2>&1 | tail -5
 
-echo -e "${GREEN}APK signed: ${SIGNED_APK}${NC}"
+APK_ARM="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+if [ -f "$APK_ARM" ]; then
+    SIGNED_ARM="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm.apk"
+    $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+        --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+        --out "$SIGNED_ARM" "$APK_ARM"
+    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm.apk${NC}"
+    RELEASE_FILES+=("$SIGNED_ARM")
+fi
+
+# Build and sign ARM64 (64-bit)
+echo -e "${YELLOW}Building Android TV (ARM 64-bit)...${NC}"
+pnpm tauri android build --target aarch64 2>&1 | tail -5
+
+APK_ARM64="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+if [ -f "$APK_ARM64" ]; then
+    SIGNED_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm64.apk"
+    $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+        --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+        --out "$SIGNED_ARM64" "$APK_ARM64"
+    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm64.apk${NC}"
+    RELEASE_FILES+=("$SIGNED_ARM64")
+fi
+
+# ============================================
+# Desktop Builds
+# ============================================
+echo -e "\n${BLUE}=== Building Desktop Apps ===${NC}"
+
+# macOS (Apple Silicon)
+echo -e "${YELLOW}Building macOS (Apple Silicon)...${NC}"
+pnpm tauri build --target aarch64-apple-darwin 2>&1 | tail -5
+
+DMG_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
+if [ -f "$DMG_ARM64" ]; then
+    MACOS_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-macos-arm64.dmg"
+    cp "$DMG_ARM64" "$MACOS_ARM64"
+    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-macos-arm64.dmg${NC}"
+    RELEASE_FILES+=("$MACOS_ARM64")
+fi
+
+# macOS (Intel)
+echo -e "${YELLOW}Building macOS (Intel x64)...${NC}"
+pnpm tauri build --target x86_64-apple-darwin 2>&1 | tail -5
+
+DMG_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
+if [ -f "$DMG_X64" ]; then
+    MACOS_X64="$RELEASE_DIR/Streamer-v${VERSION}-macos-x64.dmg"
+    cp "$DMG_X64" "$MACOS_X64"
+    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-macos-x64.dmg${NC}"
+    RELEASE_FILES+=("$MACOS_X64")
+fi
+
+# Windows (cross-compile from macOS - requires additional setup)
+# echo -e "${YELLOW}Building Windows (x64)...${NC}"
+# pnpm tauri build --target x86_64-pc-windows-msvc 2>&1 | tail -5
+
+# Linux (cross-compile from macOS - requires additional setup)
+# echo -e "${YELLOW}Building Linux (x64)...${NC}"
+# pnpm tauri build --target x86_64-unknown-linux-gnu 2>&1 | tail -5
+
+# ============================================
+# Git & GitHub Release
+# ============================================
+echo -e "\n${BLUE}=== Creating Release ===${NC}"
 
 # Commit version bump
 echo -e "${YELLOW}Committing version bump...${NC}"
-git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
-git commit -m "Bump version to ${VERSION}" || true
+git add "$PROJECT_DIR/src-tauri/tauri.conf.json" "$PROJECT_DIR/src-tauri/Cargo.toml"
+git commit -m "Release v${VERSION}" || true
 
 # Create git tag
 echo -e "${YELLOW}Creating git tag v${VERSION}...${NC}"
 git tag -a "v${VERSION}" -m "Release v${VERSION}" 2>/dev/null || {
-    echo -e "${YELLOW}Tag already exists, skipping...${NC}"
+    echo -e "${YELLOW}Tag already exists, deleting and recreating...${NC}"
+    git tag -d "v${VERSION}" 2>/dev/null || true
+    git push origin --delete "v${VERSION}" 2>/dev/null || true
+    git tag -a "v${VERSION}" -m "Release v${VERSION}"
 }
 
 # Push to remote
 echo -e "${YELLOW}Pushing to remote...${NC}"
-git push origin main --tags 2>/dev/null || {
-    echo -e "${YELLOW}Push failed - you may need to set up remote first${NC}"
-    echo "Run: git remote add origin https://github.com/YOUR_USERNAME/streamer.git"
-}
+git push origin main --tags
 
 # Create GitHub release
 echo -e "${YELLOW}Creating GitHub release...${NC}"
@@ -163,40 +229,65 @@ echo -e "${YELLOW}Creating GitHub release...${NC}"
 RELEASE_NOTES=$(cat <<EOF
 ## Streamer v${VERSION}
 
-### What's New
-- Stream movies from YTS on your Android TV
-- Netflix-style browsing interface
-- In-app video player with controls
-- Subtitle support via SubDL
-- Auto-update checker
-- D-pad/remote navigation optimized
+### Downloads
 
-### Installation
-1. Download the APK below
-2. Enable "Install from unknown sources" on your Android TV
-3. Install using a file manager or ADB:
+| Platform | Architecture | File |
+|----------|--------------|------|
+| Android TV | ARM (32-bit) | \`Streamer-v${VERSION}-android-tv-arm.apk\` |
+| Android TV | ARM64 (64-bit) | \`Streamer-v${VERSION}-android-tv-arm64.apk\` |
+| macOS | Apple Silicon | \`Streamer-v${VERSION}-macos-arm64.dmg\` |
+| macOS | Intel | \`Streamer-v${VERSION}-macos-x64.dmg\` |
+
+### Android TV Installation
+
+1. Download the APK for your device:
+   - **Mi Box, older Android TV**: Use \`arm\` version
+   - **Newer Android TV, Shield**: Use \`arm64\` version
+2. Enable "Install from unknown sources" in Settings
+3. Install via file manager or ADB:
+   \`\`\`bash
+   adb install Streamer-v${VERSION}-android-tv-arm64.apk
    \`\`\`
-   adb install streamer-v${VERSION}.apk
-   \`\`\`
+
+### macOS Installation
+
+1. Download the DMG for your Mac
+2. Open the DMG and drag Streamer to Applications
+3. First launch: Right-click > Open (to bypass Gatekeeper)
+
+### Features
+
+- Stream movies from YTS on Android TV
+- Netflix-style browsing with D-pad navigation
+- In-app video player with controls
+- Subtitle support (60+ languages) via SubDL
+- Auto-load subtitles based on language preference
+- Auto-update checker
 
 ### Requirements
-- Android 7.0+ (API 24)
-- Internet connection
+
+- **Android TV**: Android 7.0+ (API 24)
+- **macOS**: macOS 10.15+
 EOF
 )
 
+# Delete existing release if it exists
+gh release delete "v${VERSION}" --yes 2>/dev/null || true
+
+# Create new release with all files
 gh release create "v${VERSION}" \
     --title "Streamer v${VERSION}" \
     --notes "$RELEASE_NOTES" \
-    "$SIGNED_APK" \
-    2>/dev/null || {
-    echo -e "${YELLOW}Release may already exist. Uploading asset...${NC}"
-    gh release upload "v${VERSION}" "$SIGNED_APK" --clobber 2>/dev/null || true
-}
-
-# Clean up
-rm -f "$SIGNED_APK"
+    "${RELEASE_FILES[@]}"
 
 echo ""
-echo -e "${GREEN}✅ Release v${VERSION} created successfully!${NC}"
-echo -e "View at: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/v${VERSION}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Release v${VERSION} complete!${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+echo -e "Files built:"
+for f in "${RELEASE_FILES[@]}"; do
+    echo -e "  ${BLUE}$(basename "$f")${NC}"
+done
+echo ""
+echo -e "View at: ${BLUE}https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/v${VERSION}${NC}"

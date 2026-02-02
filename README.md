@@ -4,7 +4,7 @@
 
 **Stream movies on your Android TV with a Netflix-style experience**
 
-[![Release](https://img.shields.io/github/v/release/flakerim/Streamer?style=flat-square)](https://github.com/flakerim/Streamer/releases)
+[![Release](https://img.shields.io/github/v/release/CoolEntertainmentRepos/Streamer?style=flat-square)](https://github.com/CoolEntertainmentRepos/Streamer/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20TV%20%7C%20macOS-green?style=flat-square)](#downloads)
 

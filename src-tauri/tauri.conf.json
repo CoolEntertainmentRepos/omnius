@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Streamer",
-  "version": "1.0.1",
-  "identifier": "com.flakerim.streamer",
+  "productName": "Omnius",
+  "version": "1.0.2",
+  "identifier": "lol.omnius.tv",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Streamer",
+        "title": "Omnius",
         "width": 1920,
         "height": 1080,
         "fullscreen": false
@@ -40,7 +40,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/flakerim/Streamer/releases/latest/download/latest.json"
+        "https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBGRjRCQjQ1ODU0NDk3M0UKUldRK2wwU0ZSYnYwRCt1bWQxOXRNWFY1cWJVb2Zzaml5STlTOFlrY2tyMkc1d0ZjNXV1MDhSSkoK"
     }

@@ -1,5 +1,6 @@
 // Tauri invoke wrappers for all commands
 import { invoke } from "@tauri-apps/api/core";
+import { cachedFetch, makeCacheKey, CACHE_TTL } from "./cache";
 import type {
   ListMoviesParams,
   MovieListData,
@@ -11,48 +12,61 @@ import type {
 } from "./types";
 
 /**
- * Fetch a list of movies from YTS API
+ * Fetch a list of movies from YTS API (cached)
  */
-export async function listMovies(params: ListMoviesParams): Promise<MovieListData> {
-  return await invoke<MovieListData>("list_movies", { params });
+export async function listMovies(params: ListMoviesParams, forceRefresh: boolean = false): Promise<MovieListData> {
+  const cacheKey = makeCacheKey('movies', params as Record<string, unknown>);
+  return cachedFetch(
+    cacheKey,
+    CACHE_TTL.MOVIES_LIST,
+    () => invoke<MovieListData>("list_movies", { params }),
+    forceRefresh
+  );
 }
 
 /**
- * Get detailed information about a specific movie
+ * Get detailed information about a specific movie (cached)
  */
 export async function getMovieDetails(
   movieId: number,
   withCast: boolean = true,
-  withImages: boolean = true
+  withImages: boolean = true,
+  forceRefresh: boolean = false
 ): Promise<MovieDetails> {
-  console.log("[getMovieDetails] Calling with movieId:", movieId);
-  try {
-    const result = await invoke<MovieDetails>("get_movie_details", {
-      movieId,
-      withCast,
-      withImages,
-    });
-    console.log("[getMovieDetails] Success:", result.title);
-    return result;
-  } catch (error) {
-    console.error("[getMovieDetails] Error:", error);
-    throw error;
-  }
+  const cacheKey = `movie_details_${movieId}_${withCast}_${withImages}`;
+  return cachedFetch(
+    cacheKey,
+    CACHE_TTL.MOVIE_DETAILS,
+    async () => {
+      console.log("[getMovieDetails] Fetching movieId:", movieId);
+      const result = await invoke<MovieDetails>("get_movie_details", {
+        movieId,
+        withCast,
+        withImages,
+      });
+      console.log("[getMovieDetails] Success:", result.title);
+      return result;
+    },
+    forceRefresh
+  );
 }
 
 /**
- * Get movie suggestions/recommendations based on a movie
+ * Get movie suggestions/recommendations based on a movie (cached)
  */
-export async function getMovieSuggestions(movieId: number): Promise<Movie[]> {
-  console.log("[getMovieSuggestions] Calling with movieId:", movieId);
-  try {
-    const result = await invoke<Movie[]>("get_movie_suggestions", { movieId });
-    console.log("[getMovieSuggestions] Success:", result.length, "suggestions");
-    return result;
-  } catch (error) {
-    console.error("[getMovieSuggestions] Error:", error);
-    throw error;
-  }
+export async function getMovieSuggestions(movieId: number, forceRefresh: boolean = false): Promise<Movie[]> {
+  const cacheKey = `suggestions_${movieId}`;
+  return cachedFetch(
+    cacheKey,
+    CACHE_TTL.SUGGESTIONS,
+    async () => {
+      console.log("[getMovieSuggestions] Fetching movieId:", movieId);
+      const result = await invoke<Movie[]>("get_movie_suggestions", { movieId });
+      console.log("[getMovieSuggestions] Success:", result.length, "suggestions");
+      return result;
+    },
+    forceRefresh
+  );
 }
 
 /**
@@ -77,10 +91,15 @@ export async function getStreamStats(infoHash: string): Promise<StreamStats> {
 }
 
 /**
- * Get movie rating from OMDB (IMDb, Rotten Tomatoes, Metacritic)
+ * Get movie rating from OMDB (IMDb, Rotten Tomatoes, Metacritic) - cached
  */
 export async function getMovieRating(imdbCode: string): Promise<MovieRating> {
-  return await invoke<MovieRating>("get_movie_rating", { imdbCode });
+  const cacheKey = `rating_${imdbCode}`;
+  return cachedFetch(
+    cacheKey,
+    CACHE_TTL.MOVIE_DETAILS, // Same TTL as movie details
+    () => invoke<MovieRating>("get_movie_rating", { imdbCode })
+  );
 }
 
 /**

@@ -1,14 +1,14 @@
 <div align="center">
 
-# Streamer
+# Omnius
 
 **Stream movies on your Android TV with a Netflix-style experience**
 
-[![Release](https://img.shields.io/github/v/release/CoolEntertainmentRepos/Streamer?style=flat-square)](https://github.com/CoolEntertainmentRepos/Streamer/releases)
+[![Release](https://img.shields.io/github/v/release/CoolEntertainmentRepos/omnius?style=flat-square)](https://github.com/CoolEntertainmentRepos/omnius/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20TV%20%7C%20macOS-green?style=flat-square)](#downloads)
 
-<img src="static/screenshots/home.png" alt="Streamer Home" width="800"/>
+<img src="static/screenshots/home.png" alt="Omnius Home" width="800"/>
 
 </div>
 
@@ -20,6 +20,7 @@
 - **D-pad Navigation** - Full remote control support for Android TV
 - **In-app Streaming** - Watch movies directly without leaving the app
 - **Subtitles** - Auto-load subtitles in 60+ languages via SubDL
+- **Live TV** - Watch live channels from around the world
 - **Search & Browse** - Find movies by title, genre, or rating
 - **Auto Updates** - Get notified when new versions are available
 
@@ -48,10 +49,10 @@
 
 | Platform | Architecture | Download |
 |----------|--------------|----------|
-| Android TV | ARM (Mi Box, older devices) | [Download APK](https://github.com/flakerim/Streamer/releases/latest/download/Streamer-android-tv-arm.apk) |
-| Android TV | ARM64 (Shield, newer devices) | [Download APK](https://github.com/flakerim/Streamer/releases/latest/download/Streamer-android-tv-arm64.apk) |
-| macOS | Apple Silicon | [Download DMG](https://github.com/flakerim/Streamer/releases/latest/download/Streamer-macos-arm64.dmg) |
-| macOS | Intel | [Download DMG](https://github.com/flakerim/Streamer/releases/latest/download/Streamer-macos-x64.dmg) |
+| Android TV | ARM (Mi Box, older devices) | [Download APK](https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/Omnius-android-tv-arm.apk) |
+| Android TV | ARM64 (Shield, newer devices) | [Download APK](https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/Omnius-android-tv-arm64.apk) |
+| macOS | Apple Silicon | [Download DMG](https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/Omnius-macos-arm64.dmg) |
+| macOS | Intel | [Download DMG](https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/Omnius-macos-x64.dmg) |
 
 ## Installation
 
@@ -61,13 +62,13 @@
 2. Enable **"Install from unknown sources"** in Settings > Security
 3. Install using a file manager or via ADB:
    ```bash
-   adb install Streamer-android-tv-arm64.apk
+   adb install Omnius-android-tv-arm64.apk
    ```
 
 ### macOS
 
 1. Download the DMG for your Mac
-2. Open the DMG and drag **Streamer** to Applications
+2. Open the DMG and drag **Omnius** to Applications
 3. First launch: Right-click > Open (to bypass Gatekeeper)
 
 ## Tech Stack
@@ -134,6 +135,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**[Report Bug](https://github.com/flakerim/Streamer/issues) · [Request Feature](https://github.com/flakerim/Streamer/issues)**
+**[Website](https://omnius.lol) · [Report Bug](https://github.com/CoolEntertainmentRepos/omnius/issues) · [Request Feature](https://github.com/CoolEntertainmentRepos/omnius/issues)**
 
 </div>

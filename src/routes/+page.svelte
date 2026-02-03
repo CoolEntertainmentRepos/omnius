@@ -6,7 +6,7 @@
   import MovieGrid from "$lib/components/MovieGrid.svelte";
   import { listMovies } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
-  import { makeFocusable } from "$lib/utils/tvNavigation";
+  import { makeFocusable, addSection } from "$lib/utils/tvNavigation";
   import type { Movie } from "$lib/api/types";
 
   // Category rows data
@@ -21,6 +21,9 @@
   let drama = $state<Movie[]>([]);
 
   let loading = $state(true);
+  let loadError = $state<string | null>(null);
+  let retryCount = $state(0);
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let activeNav = $state("home");
 
   // Search state
@@ -39,6 +42,39 @@
   let genrePage = $state(1);
   let genreTotal = $state(0);
   let genreLoadingMore = $state(false);
+
+  // Live Channels (IPTV) - using iptv-org API
+  interface IPTVChannel {
+    id: string;
+    name: string;
+    country: string;
+    languages: string[];
+    categories: string[];
+    logo?: string;
+    url?: string;
+  }
+  interface IPTVStream {
+    channel: string;
+    url: string;
+  }
+  interface IPTVCountry {
+    code: string;
+    name: string;
+    flag: string;
+  }
+  interface IPTVCategory {
+    id: string;
+    name: string;
+  }
+
+  let iptvChannels = $state<IPTVChannel[]>([]);
+  let iptvCountries = $state<IPTVCountry[]>([]);
+  let iptvCategories = $state<IPTVCategory[]>([]);
+  let channelGroups = $state<string[]>([]);
+  let selectedGroup = $state<string | null>(null);
+  let channelsLoading = $state(false);
+  let channelsError = $state<string | null>(null);
+  let channelGroupBy = $state<'country' | 'category'>('country');
 
   // Pagination for category views
   let trendingPage = $state(1);
@@ -64,64 +100,229 @@
     // Refresh focusable elements and set initial focus
     setTimeout(() => {
       makeFocusable();
-      // Focus on first nav item (home) by default
-      const homeNav = document.querySelector<HTMLElement>('.nav-item.active');
-      homeNav?.focus();
-    }, 200);
+
+      // Add sidebar section with navigation to content on RIGHT
+      addSection('sidebar', '.sidebar .nav-item', {
+        restrict: 'self-first',
+        leaveFor: {
+          right: '.movie-card, .featured-actions button',
+          down: '.movie-card, .featured-actions button'
+        }
+      });
+
+      // Add content section
+      addSection('content', '.main-content button, .main-content a, .movie-card', {
+        restrict: 'self-first',
+        leaveFor: {
+          left: '.sidebar .nav-item.active'
+        }
+      });
+
+      // Focus on first movie card by default for quick access
+      const firstMovieCard = document.querySelector<HTMLElement>('.movie-card');
+      if (firstMovieCard) {
+        firstMovieCard.focus();
+      }
+    }, 300);
+
+    // Cleanup on unmount
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   });
 
   async function loadHomeContent() {
     loading = true;
+    loadError = null;
 
-    const [
-      trendingData,
-      topRatedData,
-      newReleasesData,
-      actionData,
-      comedyData,
-      thrillerData,
-      scifiData,
-      dramaData,
-    ] = await Promise.all([
-      listMovies({ sort_by: "download_count", limit: 20 }),
-      listMovies({ sort_by: "rating", limit: 20, minimum_rating: 8 }),
-      listMovies({ sort_by: "date_added", limit: 20 }),
-      listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
-      listMovies({ genre: "Comedy", sort_by: "rating", limit: 20 }),
-      listMovies({ genre: "Thriller", sort_by: "rating", limit: 20 }),
-      listMovies({ genre: "Sci-Fi", sort_by: "rating", limit: 20 }),
-      listMovies({ genre: "Drama", sort_by: "rating", limit: 20 }),
-    ]);
+    try {
+      const [
+        trendingData,
+        topRatedData,
+        newReleasesData,
+        actionData,
+        comedyData,
+        thrillerData,
+        scifiData,
+        dramaData,
+      ] = await Promise.all([
+        listMovies({ sort_by: "download_count", limit: 20 }),
+        listMovies({ sort_by: "rating", limit: 20, minimum_rating: 8 }),
+        listMovies({ sort_by: "date_added", limit: 20 }),
+        listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
+        listMovies({ genre: "Comedy", sort_by: "rating", limit: 20 }),
+        listMovies({ genre: "Thriller", sort_by: "rating", limit: 20 }),
+        listMovies({ genre: "Sci-Fi", sort_by: "rating", limit: 20 }),
+        listMovies({ genre: "Drama", sort_by: "rating", limit: 20 }),
+      ]);
 
-    trending = trendingData.movies || [];
-    trendingTotal = trendingData.movie_count || 0;
-    topRated = topRatedData.movies || [];
-    newReleases = newReleasesData.movies || [];
-    newReleasesTotal = newReleasesData.movie_count || 0;
-    action = actionData.movies || [];
-    comedy = comedyData.movies || [];
-    thriller = thrillerData.movies || [];
-    scifi = scifiData.movies || [];
-    drama = dramaData.movies || [];
+      trending = trendingData.movies || [];
+      trendingTotal = trendingData.movie_count || 0;
+      topRated = topRatedData.movies || [];
+      newReleases = newReleasesData.movies || [];
+      newReleasesTotal = newReleasesData.movie_count || 0;
+      action = actionData.movies || [];
+      comedy = comedyData.movies || [];
+      thriller = thrillerData.movies || [];
+      scifi = scifiData.movies || [];
+      drama = dramaData.movies || [];
 
-    // Pick a random featured movie from top rated
-    if (topRated.length > 0) {
-      featured = topRated[Math.floor(Math.random() * Math.min(5, topRated.length))];
+      // Pick a random featured movie from top rated
+      if (topRated.length > 0) {
+        featured = topRated[Math.floor(Math.random() * Math.min(5, topRated.length))];
+      }
+
+      // Reset retry count on success
+      retryCount = 0;
+      loadError = null;
+    } catch (err) {
+      console.error('[Home] Failed to load content:', err);
+      loadError = "Unable to connect to server";
+
+      // Auto-retry with exponential backoff (max 30 seconds)
+      const delay = Math.min(3000 * Math.pow(2, retryCount), 30000);
+      retryCount += 1;
+      console.log(`[Home] Retrying in ${delay/1000}s (attempt ${retryCount})`);
+
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        loadHomeContent();
+      }, delay);
+    } finally {
+      loading = false;
     }
-
-    loading = false;
   }
 
-  function handleNavClick(nav: string) {
+  function manualRetry() {
+    retryCount = 0;
+    if (retryTimer) clearTimeout(retryTimer);
+    loadHomeContent();
+  }
+
+  async function loadChannels() {
+    if (iptvChannels.length > 0) return; // Already loaded
+
+    channelsLoading = true;
+    channelsError = null;
+
+    try {
+      // Check cache first (1 hour TTL for channels since they come from local server now)
+      if (browser) {
+        const cached = localStorage.getItem('iptv_data_v3');
+        const cacheTime = localStorage.getItem('iptv_data_v3_time');
+        const oneHour = 60 * 60 * 1000;
+
+        if (cached && cacheTime && Date.now() - parseInt(cacheTime) < oneHour) {
+          console.log('[IPTV] Loading from cache');
+          const data = JSON.parse(cached);
+          iptvChannels = data.channels;
+          iptvCountries = data.countries;
+          iptvCategories = data.categories;
+          updateChannelGroups();
+          channelsLoading = false;
+          return;
+        }
+      }
+
+      console.log('[IPTV] Fetching from local server');
+
+      // Fetch from local torrent-server (much faster than iptv-org)
+      const response = await fetch('http://192.168.1.4:8080/api/channels');
+      if (!response.ok) throw new Error('Failed to fetch channels');
+
+      const data = await response.json();
+
+      iptvChannels = data.channels || [];
+      iptvCountries = data.countries || [];
+      iptvCategories = data.categories || [];
+      updateChannelGroups();
+
+      // Cache for 1 hour (server syncs daily)
+      if (browser) {
+        localStorage.setItem('iptv_data_v3', JSON.stringify(data));
+        localStorage.setItem('iptv_data_v3_time', Date.now().toString());
+      }
+
+      console.log(`[IPTV] Loaded ${iptvChannels.length} channels from local server`);
+    } catch (err) {
+      console.error('[IPTV] Failed to load from local server:', err);
+      channelsError = 'Failed to load channels. Is the server running?';
+    } finally {
+      channelsLoading = false;
+    }
+  }
+
+  function updateChannelGroups() {
+    if (channelGroupBy === 'country') {
+      // Get unique countries that have channels
+      const countrySet = new Set(iptvChannels.map(ch => ch.country));
+      const countriesWithChannels = iptvCountries.filter(c => countrySet.has(c.code));
+      channelGroups = countriesWithChannels.map(c => c.code).sort((a, b) => {
+        const nameA = iptvCountries.find(c => c.code === a)?.name || a;
+        const nameB = iptvCountries.find(c => c.code === b)?.name || b;
+        return nameA.localeCompare(nameB);
+      });
+    } else {
+      // Get unique categories that have channels
+      const catSet = new Set(iptvChannels.flatMap(ch => ch.categories));
+      channelGroups = iptvCategories
+        .filter(c => catSet.has(c.id))
+        .map(c => c.id)
+        .sort((a, b) => {
+          const nameA = iptvCategories.find(c => c.id === a)?.name || a;
+          const nameB = iptvCategories.find(c => c.id === b)?.name || b;
+          return nameA.localeCompare(nameB);
+        });
+    }
+  }
+
+  function getGroupName(code: string): string {
+    if (channelGroupBy === 'country') {
+      const country = iptvCountries.find(c => c.code === code);
+      return country ? `${country.flag} ${country.name}` : code;
+    } else {
+      const cat = iptvCategories.find(c => c.id === code);
+      return cat?.name || code;
+    }
+  }
+
+  function getChannelsInGroup(groupCode: string): IPTVChannel[] {
+    if (channelGroupBy === 'country') {
+      return iptvChannels.filter(ch => ch.country === groupCode);
+    } else {
+      return iptvChannels.filter(ch => ch.categories.includes(groupCode));
+    }
+  }
+
+  function switchGroupBy(mode: 'country' | 'category') {
+    channelGroupBy = mode;
+    selectedGroup = null;
+    updateChannelGroups();
+  }
+
+  function playChannel(channel: IPTVChannel) {
+    if (channel.url) {
+      goto(`/player/live?url=${encodeURIComponent(channel.url)}&title=${encodeURIComponent(channel.name)}`);
+    }
+  }
+
+  async function handleNavClick(nav: string) {
     activeNav = nav;
     showSearch = nav === "search";
     selectedGenre = null;
+    selectedGroup = null;
 
     if (nav === "home") {
       searchQuery = "";
       searchResults = [];
       // Scroll to top when going home
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Always refresh content when going to home
+      await loadHomeContent();
+    }
+
+    if (nav === "live") {
+      await loadChannels();
     }
 
     // Auto-focus search input when entering search
@@ -294,13 +495,19 @@
 </script>
 
 <svelte:head>
-  <title>Streamer - Watch Movies</title>
+  <title>Omnius - Watch Movies & Live TV</title>
 </svelte:head>
 
 <div class="app">
   <!-- Left Sidebar -->
   <nav class="sidebar">
     <div class="sidebar-top">
+      <!-- Omnius Logo -->
+      <div class="logo-container">
+        <svg viewBox="0 0 7 7" fill="none" class="omnius-logo">
+          <path d="M3.336 6.69596C2.696 6.69596 2.124 6.55196 1.62 6.26396C1.116 5.97596 0.72 5.57996 0.432 5.07596C0.144 4.57196 0 3.99996 0 3.35996C0 2.71196 0.144 2.13596 0.432 1.63196C0.72 1.12796 1.116 0.731963 1.62 0.443963C2.124 0.155963 2.696 0.0119629 3.336 0.0119629C3.976 0.0119629 4.544 0.155963 5.04 0.443963C5.544 0.731963 5.94 1.12796 6.228 1.63196C6.516 2.13596 6.664 2.71196 6.672 3.35996C6.672 3.99996 6.524 4.57196 6.228 5.07596C5.94 5.57996 5.544 5.97596 5.04 6.26396C4.544 6.55196 3.976 6.69596 3.336 6.69596ZM3.336 5.85596C3.8 5.85596 4.216 5.74796 4.584 5.53196C4.952 5.31596 5.24 5.01996 5.448 4.64396C5.656 4.26796 5.76 3.83996 5.76 3.35996C5.76 2.87996 5.656 2.45196 5.448 2.07596C5.24 1.69196 4.952 1.39196 4.584 1.17596C4.216 0.959963 3.8 0.851963 3.336 0.851963C2.872 0.851963 2.456 0.959963 2.088 1.17596C1.72 1.39196 1.428 1.69196 1.212 2.07596C1.004 2.45196 0.9 2.87996 0.9 3.35996C0.9 3.83996 1.004 4.26796 1.212 4.64396C1.428 5.01996 1.72 5.31596 2.088 5.53196C2.456 5.74796 2.872 5.85596 3.336 5.85596Z" fill="#FF2D55"/>
+        </svg>
+      </div>
       <button
         class="nav-item"
         class:active={activeNav === "search"}
@@ -323,18 +530,6 @@
       </button>
       <button
         class="nav-item"
-        class:active={activeNav === "trending"}
-        onclick={() => handleNavClick("trending")}
-        aria-label="Trending"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
-        </svg>
-      </button>
-    </div>
-    <div class="sidebar-bottom">
-      <button
-        class="nav-item"
         class:active={activeNav === "movies"}
         onclick={() => handleNavClick("movies")}
         aria-label="Movies"
@@ -343,6 +538,28 @@
           <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
         </svg>
       </button>
+      <button
+        class="nav-item"
+        class:active={activeNav === "tv"}
+        onclick={() => handleNavClick("tv")}
+        aria-label="TV Series"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+        </svg>
+      </button>
+      <button
+        class="nav-item"
+        class:active={activeNav === "live"}
+        onclick={() => handleNavClick("live")}
+        aria-label="Live Channels"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="sidebar-bottom">
       <button
         class="nav-item"
         class:active={activeNav === "favorites"}
@@ -358,16 +575,6 @@
       </button>
       <button
         class="nav-item"
-        class:active={activeNav === "new"}
-        onclick={() => handleNavClick("new")}
-        aria-label="New Releases"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-        </svg>
-      </button>
-      <button
-        class="nav-item"
         onclick={() => goto('/settings')}
         aria-label="Settings"
       >
@@ -380,9 +587,21 @@
 
   <!-- Main Content -->
   <main class="main-content">
-    {#if loading}
+    {#if loading && !loadError}
       <div class="loading-page">
         <div class="spinner"></div>
+      </div>
+    {:else if loadError}
+      <div class="error-page">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="error-icon">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>
+        <h2>Connection Error</h2>
+        <p>{loadError}</p>
+        <p class="retry-info">Retrying automatically... (attempt {retryCount})</p>
+        <button class="btn-retry" onclick={manualRetry}>
+          Retry Now
+        </button>
       </div>
     {:else if showSearch}
       <!-- Search View -->
@@ -491,18 +710,92 @@
           onLoadMore={loadMoreGenre}
         />
       </div>
-    {:else if activeNav === "trending"}
-      <!-- Trending View -->
+    {:else if activeNav === "tv"}
+      <!-- TV Series View -->
       <div class="category-view">
-        <h1 class="category-title">Trending Now</h1>
-        <MovieGrid
-          movies={trending}
-          loading={false}
-          error={null}
-          hasMore={trending.length < trendingTotal}
-          loadingMore={trendingLoadingMore}
-          onLoadMore={loadMoreTrending}
-        />
+        <h1 class="category-title">TV Series</h1>
+        <p class="coming-soon">Coming soon - TV Series sync from EZTV</p>
+      </div>
+    {:else if activeNav === "live"}
+      <!-- Live Channels View -->
+      <div class="category-view">
+        <div class="live-header">
+          <h1 class="category-title">Live Channels</h1>
+          {#if iptvChannels.length > 0 && !selectedGroup}
+            <div class="group-toggle">
+              <button
+                class="toggle-btn"
+                class:active={channelGroupBy === 'country'}
+                onclick={() => switchGroupBy('country')}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                </svg>
+                Countries
+              </button>
+              <button
+                class="toggle-btn"
+                class:active={channelGroupBy === 'category'}
+                onclick={() => switchGroupBy('category')}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
+                </svg>
+                Categories
+              </button>
+            </div>
+          {/if}
+        </div>
+        {#if channelsLoading}
+          <div class="loading-inline">
+            <div class="spinner"></div>
+            <p>Loading channels...</p>
+          </div>
+        {:else if channelsError}
+          <div class="error-inline">
+            <p>{channelsError}</p>
+            <button class="btn-retry" onclick={loadChannels}>Retry</button>
+          </div>
+        {:else if selectedGroup}
+          <div class="genre-header">
+            <button class="back-btn" onclick={() => selectedGroup = null} aria-label="Go back">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+              </svg>
+            </button>
+            <h2>{getGroupName(selectedGroup)}</h2>
+            <span class="group-channel-count">{getChannelsInGroup(selectedGroup).length} channels</span>
+          </div>
+          <div class="channels-list">
+            {#each getChannelsInGroup(selectedGroup) as channel (channel.id)}
+              <button class="channel-list-item" onclick={() => playChannel(channel)}>
+                {#if channel.logo}
+                  <img src={channel.logo} alt="" class="channel-list-logo" />
+                {:else}
+                  <div class="channel-list-logo-placeholder">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                    </svg>
+                  </div>
+                {/if}
+                <span class="channel-list-name">{channel.name}</span>
+                <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="channels-info">{iptvChannels.length} channels available</p>
+          <div class="genre-grid">
+            {#each channelGroups as group (group)}
+              <button class="genre-card" onclick={() => selectedGroup = group}>
+                {getGroupName(group)}
+                <span class="group-count">({getChannelsInGroup(group).length})</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if activeNav === "new"}
       <!-- New Releases View -->
@@ -747,6 +1040,21 @@
     align-items: center;
     justify-content: center;
     padding: 0 4px;
+  }
+
+  /* Omnius Logo */
+  .logo-container {
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+
+  .omnius-logo {
+    width: 32px;
+    height: 32px;
   }
 
   /* Main Content - scrollable area */
@@ -1268,6 +1576,311 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* Error page */
+  .error-page {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px;
+  }
+
+  .error-icon {
+    width: 80px;
+    height: 80px;
+    color: #e50914;
+    margin-bottom: 24px;
+  }
+
+  .error-page h2 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0 0 12px;
+  }
+
+  .error-page p {
+    color: #888;
+    margin: 0 0 8px;
+  }
+
+  .retry-info {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 24px;
+  }
+
+  .btn-retry {
+    padding: 14px 32px;
+    background: #e50914;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-retry:hover {
+    background: #f40d17;
+  }
+
+  .btn-retry:focus,
+  .btn-retry:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(229, 9, 20, 0.5);
+    transform: scale(1.05);
+  }
+
+  /* Coming soon */
+  .coming-soon {
+    color: #888;
+    font-size: 1.1rem;
+    text-align: center;
+    padding: 60px 20px;
+  }
+
+  /* Loading/error inline */
+  .loading-inline, .error-inline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 60px 20px;
+    color: #888;
+  }
+
+  .channels-info {
+    color: #888;
+    margin-bottom: 24px;
+  }
+
+  /* Live header with toggle */
+  .live-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .live-header .category-title {
+    margin: 0;
+  }
+
+  .group-toggle {
+    display: flex;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px;
+    border-radius: 8px;
+  }
+
+  .toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #888;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .toggle-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .toggle-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .toggle-btn.active {
+    color: #fff;
+    background: #e50914;
+  }
+
+  .toggle-btn:focus,
+  .toggle-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+  }
+
+  .group-count {
+    font-size: 0.8rem;
+    color: #666;
+    margin-left: 8px;
+  }
+
+  /* Channels grid */
+  .channels-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 20px;
+    margin-top: 24px;
+  }
+
+  .channel-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .channel-card:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: scale(1.02);
+  }
+
+  .channel-card:focus,
+  .channel-card:focus-visible {
+    outline: none;
+    border-color: #e50914;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+    transform: scale(1.05);
+  }
+
+  .channel-logo {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+  }
+
+  .channel-logo-placeholder {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #666;
+  }
+
+  .channel-logo-placeholder svg {
+    width: 40px;
+    height: 40px;
+  }
+
+  .channel-name {
+    font-size: 0.95rem;
+    font-weight: 500;
+    text-align: center;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /* Channel list view */
+  .group-channel-count {
+    font-size: 0.9rem;
+    color: #888;
+    margin-left: auto;
+  }
+
+  .channels-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 20px;
+  }
+
+  .channel-list-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+  }
+
+  .channel-list-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .channel-list-item:focus,
+  .channel-list-item:focus-visible {
+    outline: none;
+    background: rgba(229, 9, 20, 0.2);
+    border-color: #e50914;
+  }
+
+  .channel-list-logo {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+
+  .channel-list-logo-placeholder {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #666;
+    flex-shrink: 0;
+  }
+
+  .channel-list-logo-placeholder svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .channel-list-name {
+    flex: 1;
+    font-size: 1rem;
+    font-weight: 500;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .channel-play-icon {
+    width: 24px;
+    height: 24px;
+    color: #888;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .channel-list-item:hover .channel-play-icon,
+  .channel-list-item:focus .channel-play-icon {
+    opacity: 1;
+    color: #e50914;
   }
 
   /* Responsive */

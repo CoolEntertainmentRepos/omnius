@@ -1,7 +1,7 @@
 {
-  "name": "tauri-app",
-  "version": "0.1.0",
-  "description": "",
+  "name": "omnius",
+  "version": "1.0.2",
+  "description": "Stream movies on Android TV with a Netflix-style experience",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

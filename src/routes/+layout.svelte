@@ -93,7 +93,7 @@
   :global(html, body) {
     margin: 0;
     padding: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    font-family: 'JetBrains Mono', monospace;
     background: #141414;
     color: #fff;
     -webkit-font-smoothing: antialiased;

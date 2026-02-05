@@ -4,13 +4,18 @@
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import { streamStore } from "$lib/stores/stream.svelte";
-  import { searchSubtitles, startStream, downloadSubtitle, type Subtitle } from "$lib/api/commands";
+  import { searchSubtitles, startStream, downloadSubtitle, checkStreamReady, serveSubtitle, recordView, streamStart, streamHeartbeat, streamEnd, type Subtitle } from "$lib/api/commands";
   import { makeFocusable } from "$lib/utils/tvNavigation";
+  import { platform } from "@tauri-apps/plugin-os";
+  import { playVideo } from "tauri-plugin-videoplayer-api";
 
   let hash = $derived($page.params.hash || "");
   let title = $derived($page.url.searchParams.get("title") || "Movie");
   let imdbCode = $derived($page.url.searchParams.get("imdb") || "");
   let urlStreamUrl = $derived($page.url.searchParams.get("url") || "");
+  let movieId = $derived(parseInt($page.url.searchParams.get("movie_id") || "0"));
+  let quality = $derived($page.url.searchParams.get("quality") || "");
+  let fileIndex = $derived($page.url.searchParams.get("fileIndex") ? parseInt($page.url.searchParams.get("fileIndex")!) : undefined);
 
   let videoElement: HTMLVideoElement;
   let playerContainer: HTMLDivElement;
@@ -28,13 +33,25 @@
   let subtitlesLoading = $state(false);
   let subtitleUrl = $state<string | null>(null);
   let subtitleDownloading = $state(false);
+  let servedSubtitleUrl = $state<string | null>(null);
   let preferredLanguage = $state<string>("en");
   let subdlApiKey = $state<string | undefined>(undefined);
   let error = $state<string | null>(null);
   let actualStreamUrl = $state<string | null>(null);
+  let isAndroid = $state(false);
+  let nativePlayerLaunched = $state(false);
   let inactivityTimeout: ReturnType<typeof setTimeout>;
   let videoRetryCount = $state(0);
   let readyToPlay = $state(false);
+  let bufferingStartTime = $state<number | null>(null);
+  let lastProgressCheck = $state(0);
+  let stuckDetected = $state(false);
+
+  // Analytics tracking
+  let viewRecorded = $state(false);
+  let watchStartTime = $state<number | null>(null);
+  let analyticsInterval: ReturnType<typeof setInterval> | null = null;
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   // Use actual stream URL once we have it, or URL param, or store
   const streamUrl = $derived(
@@ -46,21 +63,86 @@
     readyToPlay && streamUrl ? streamUrl : ""
   );
 
+  // Calculate if we have enough buffer to start playing
+  // More aggressive - start early if we have good speed/peers
+  const hasEnoughBuffer = $derived.by(() => {
+    // If we have direct URL, we're ready immediately
+    if (urlStreamUrl) return true;
+
+    const progress = streamStore.progressPercent;
+    const peers = streamStore.peersConnected;
+    const speed = streamStore.downloadSpeed;
+
+    // Need at least minimal progress
+    if (progress < 0.1) return false;
+
+    // Parse download speed (e.g., "2.5 MB/s" -> 2.5)
+    const speedMatch = speed.match(/([\d.]+)\s*(MB|KB|GB)/i);
+    const speedMB = speedMatch
+      ? parseFloat(speedMatch[1]) * (speedMatch[2].toUpperCase() === 'GB' ? 1024 : speedMatch[2].toUpperCase() === 'KB' ? 0.001 : 1)
+      : 0;
+
+    // Ready conditions (ordered by priority):
+    // 1. Progress >= 1% with decent speed (>0.5 MB/s) - most common case
+    // 2. Progress >= 0.3% with good speed (>2 MB/s) and peers (>5) - fast start
+    // 3. Progress >= 2% regardless of speed - fallback
+    if (progress >= 1 && speedMB > 0.5) return true;
+    if (progress >= 0.3 && speedMB > 2 && peers > 5) return true;
+    if (progress >= 2) return true;
+
+    return false;
+  });
+
   // Watch for stream progress to know when ready to play
   $effect(() => {
-    // Ready to play when we have a stream URL and either:
-    // 1. Progress is > 0.5% (some data buffered)
-    // 2. Or we have direct URL from params (already streaming)
-    if (streamUrl && !readyToPlay) {
-      if (urlStreamUrl || streamStore.progressPercent > 0.5) {
-        console.log("[Player] Stream ready, progress:", streamStore.progressPercent);
-        readyToPlay = true;
+    const progress = streamStore.progressPercent;
+    const url = streamUrl;
+    const ready = readyToPlay;
+    const buffer = hasEnoughBuffer;  // Now a value, not a function
+
+    console.log("[Player] Buffer check - streamUrl:", !!url, "readyToPlay:", ready,
+                "hasEnoughBuffer:", buffer, "progress:", progress.toFixed(1) + "%");
+
+    if (url && !ready && buffer) {
+      console.log("[Player] Starting playback! progress:", progress.toFixed(1) + "%",
+                  "speed:", streamStore.downloadSpeed, "peers:", streamStore.peersConnected);
+      readyToPlay = true;
+    }
+  });
+
+  // Track buffering time and detect stuck streams
+  $effect(() => {
+    if (!readyToPlay && streamUrl && !urlStreamUrl) {
+      if (bufferingStartTime === null) {
+        bufferingStartTime = Date.now();
+        lastProgressCheck = streamStore.progressPercent;
+      }
+
+      // Check if stuck (no progress for 15 seconds with low speed)
+      const elapsed = Date.now() - bufferingStartTime;
+      if (elapsed > 15000) {
+        const progressDelta = streamStore.progressPercent - lastProgressCheck;
+        if (progressDelta < 0.1 && streamStore.peersConnected < 2) {
+          stuckDetected = true;
+        }
+        lastProgressCheck = streamStore.progressPercent;
+        bufferingStartTime = Date.now();
       }
     }
   });
 
   onMount(async () => {
     if (!browser) return;
+
+    // Detect platform
+    try {
+      const os = await platform();
+      isAndroid = os === "android";
+      console.log("[Player] Platform detected:", os, "isAndroid:", isAndroid);
+    } catch (e) {
+      console.log("[Player] Platform detection failed, assuming desktop");
+      isAndroid = false;
+    }
 
     // Load subtitle settings
     const savedLang = localStorage.getItem("preferredSubtitleLanguage");
@@ -85,7 +167,7 @@
           setTimeout(() => reject(new Error("Stream start timed out. The torrent may not have enough peers.")), 60000);
         });
 
-        const info = await Promise.race([startStream(hash), timeoutPromise]);
+        const info = await Promise.race([startStream(hash, fileIndex), timeoutPromise]);
         actualStreamUrl = info.stream_url;
         streamStore.streamInfo = info;
         streamStore.isActive = true;
@@ -94,6 +176,7 @@
         console.error("[Player] Failed to start stream:", err);
         error = err instanceof Error ? err.message : "Failed to start stream";
         isStartingStream = false;
+        return;
       } finally {
         isStartingStream = false;
       }
@@ -104,8 +187,87 @@
     // Start polling for stream stats
     streamStore.beginStatsPolling(hash.toLowerCase());
 
-    // Fetch subtitles from OpenSubtitles (using IMDB code)
-    // This runs while torrent is buffering
+    // On Android, use native ExoPlayer for full codec support (HEVC/x265)
+    // 2-phase buffer check + parallel subtitle loading
+    if (isAndroid && actualStreamUrl) {
+      console.log("[Player] Android detected - 2-phase buffer + parallel subs");
+
+      // Start subtitle fetch in parallel (don't await yet)
+      let subtitlePromise: Promise<string | null> = Promise.resolve(null);
+      if (imdbCode) {
+        subtitlePromise = fetchAndServeSubtitle(imdbCode);
+      }
+
+      // Phase 1: Wait for torrent buffer threshold
+      const waitForBuffer = async (): Promise<boolean> => {
+        const maxWait = 60000;
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < maxWait) {
+          const progress = streamStore.progressPercent;
+          const peers = streamStore.peersConnected;
+
+          console.log("[Player] Phase 1 buffer - progress:", progress.toFixed(2) + "%", "peers:", peers);
+
+          if (progress >= 0.5 || (progress >= 0.1 && peers >= 2)) {
+            return true;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+      };
+
+      const bufferReady = await waitForBuffer();
+
+      if (!bufferReady) {
+        error = "Stream buffering timed out. The torrent may not have enough peers.";
+        return;
+      }
+
+      // Phase 2: Verify stream is actually serving data via HTTP
+      console.log("[Player] Phase 2 - verifying stream serves data...");
+      let streamReady = false;
+      for (let i = 0; i < 10; i++) {
+        try {
+          streamReady = await checkStreamReady(actualStreamUrl);
+          if (streamReady) break;
+        } catch (e) {
+          console.log("[Player] Stream ready check error:", e);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      if (!streamReady) {
+        error = "Stream server not responding. Try again.";
+        return;
+      }
+
+      // Wait for subtitle fetch (max 10s timeout, don't block playback forever)
+      console.log("[Player] Waiting for subtitle fetch...");
+      let nativeSubtitleUrl: string | null = null;
+      try {
+        nativeSubtitleUrl = await Promise.race([
+          subtitlePromise,
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 10000))
+        ]);
+      } catch (e) {
+        console.log("[Player] Subtitle fetch failed, continuing without subs:", e);
+      }
+
+      console.log("[Player] Launching ExoPlayer - video:", actualStreamUrl, "subtitle:", nativeSubtitleUrl);
+      try {
+        await playVideo(actualStreamUrl, nativeSubtitleUrl ?? undefined);
+        nativePlayerLaunched = true;
+        console.log("[Player] Native ExoPlayer launched - stream kept alive");
+        return;
+      } catch (err) {
+        console.error("[Player] Native player failed:", err);
+        error = "Native player failed: " + (err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // Desktop: Fetch subtitles from OpenSubtitles (using IMDB code)
     if (imdbCode) {
       await fetchSubtitlesAndAutoLoad(imdbCode);
     }
@@ -134,10 +296,72 @@
       document.removeEventListener("keydown", handleKeydown);
       clearTimeout(controlsTimeout);
       clearTimeout(inactivityTimeout);
+
+      // Clear heartbeat interval
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+
+      // Send final analytics with watch duration and end stream tracking
+      if (viewRecorded && movieId > 0 && watchStartTime) {
+        const watchDuration = Math.floor((Date.now() - watchStartTime) / 1000);
+        const completed = duration > 0 && currentTime > duration * 0.9;
+        recordView({
+          contentType: 'movie',
+          contentId: movieId,
+          imdbCode: imdbCode,
+          duration: watchDuration,
+          completed: completed,
+          quality: quality,
+        });
+        // End stream tracking
+        streamEnd();
+        console.log('[Analytics] Final duration:', watchDuration, 'seconds, completed:', completed);
+      }
+
       // Stop the stream when leaving the player
       streamStore.stop();
     }
   });
+
+  /**
+   * Search for subtitles and serve the best match via HTTP (for native player).
+   * Returns the HTTP URL of the VTT file, or null if none found.
+   */
+  async function fetchAndServeSubtitle(imdb: string): Promise<string | null> {
+    try {
+      let languages: string | undefined;
+      if (preferredLanguage) {
+        languages = preferredLanguage === "en" ? "en" : `${preferredLanguage},en`;
+      }
+      console.log("[Player] Searching subtitles for native player, languages:", languages);
+
+      const result = await searchSubtitles(imdb, subdlApiKey, languages);
+      if (result.subtitles.length === 0) {
+        console.log("[Player] No subtitles found for native player");
+        return null;
+      }
+
+      // Find best subtitle (preferred language, then English fallback)
+      let sub = result.subtitles.find(s => s.language === preferredLanguage);
+      if (!sub && preferredLanguage !== "en") {
+        sub = result.subtitles.find(s => s.language === "en");
+      }
+      if (!sub) {
+        sub = result.subtitles[0];
+      }
+
+      console.log("[Player] Serving subtitle for native player:", sub.release_name);
+      const url = await serveSubtitle(sub.download_url);
+      servedSubtitleUrl = url;
+      activeSubtitle = sub;
+      return url;
+    } catch (err) {
+      console.error("[Player] Failed to fetch/serve subtitle:", err);
+      return null;
+    }
+  }
 
   async function fetchSubtitlesAndAutoLoad(imdb: string) {
     subtitlesLoading = true;
@@ -321,6 +545,37 @@
 
   function handlePlay() {
     isPlaying = true;
+
+    // Record view and start stream tracking on first play
+    if (!viewRecorded && movieId > 0) {
+      viewRecorded = true;
+      watchStartTime = Date.now();
+
+      // Record the view
+      recordView({
+        contentType: 'movie',
+        contentId: movieId,
+        imdbCode: imdbCode,
+        quality: quality,
+      });
+
+      // Start stream tracking (for "Active Now" count)
+      streamStart({
+        contentType: 'movie',
+        contentId: movieId,
+        imdbCode: imdbCode,
+        quality: quality,
+      });
+
+      // Start heartbeat every 30 seconds to keep stream marked as active
+      if (!heartbeatInterval) {
+        heartbeatInterval = setInterval(() => {
+          streamHeartbeat();
+        }, 30000);
+      }
+
+      console.log('[Analytics] View recorded and stream started for movie:', movieId);
+    }
   }
 
   function handlePause() {
@@ -338,20 +593,67 @@
   function handleError() {
     // Allow retries - torrent streaming may need time to buffer
     videoRetryCount += 1;
-    console.log("[Player] Video error, retry count:", videoRetryCount);
+    console.log("[Player] Video error, retry count:", videoRetryCount, "progress:", streamStore.progressPercent);
 
-    if (videoRetryCount < 5) {
-      // Retry after a short delay
+    // Parse current download speed
+    const speedMatch = streamStore.downloadSpeed.match(/([\d.]+)\s*(MB|KB|GB)/i);
+    const speedMB = speedMatch
+      ? parseFloat(speedMatch[1]) * (speedMatch[2].toUpperCase() === 'GB' ? 1024 : speedMatch[2].toUpperCase() === 'KB' ? 0.001 : 1)
+      : 0;
+
+    // More retries if we have good conditions
+    const maxRetries = speedMB > 0.5 || streamStore.peersConnected > 5 ? 10 : 5;
+    const retryDelay = speedMB > 1 ? 1500 : speedMB > 0.3 ? 2500 : 4000;
+
+    if (videoRetryCount < maxRetries) {
+      // Need more buffer - wait for more data
       isBuffering = true;
-      setTimeout(() => {
-        if (videoElement && videoSrc) {
-          console.log("[Player] Retrying video load...");
-          videoElement.load();
+      readyToPlay = false;
+
+      // Wait for more buffer before retrying
+      const checkAndRetry = () => {
+        if (streamStore.progressPercent > videoRetryCount * 0.5 || streamStore.progressPercent > 3) {
+          console.log("[Player] Retrying video load with", streamStore.progressPercent.toFixed(1) + "% buffered");
+          readyToPlay = true;
+          setTimeout(() => {
+            if (videoElement) {
+              videoElement.load();
+            }
+          }, 500);
+        } else {
+          // Not enough buffer yet, wait more
+          setTimeout(checkAndRetry, retryDelay);
         }
-      }, 2000);
+      };
+
+      setTimeout(checkAndRetry, retryDelay);
     } else {
-      error = "Failed to load video. The torrent may not have enough peers.";
+      // Show error with helpful info
+      if (streamStore.peersConnected < 2) {
+        error = "Not enough peers to stream. Try a different torrent with more seeders.";
+      } else if (speedMB < 0.1) {
+        error = "Download speed too slow. The torrent may have limited availability.";
+      } else {
+        error = "Unable to play this stream. The video format may not be supported.";
+      }
       isBuffering = false;
+    }
+  }
+
+  function retryStream() {
+    error = null;
+    videoRetryCount = 0;
+    readyToPlay = false;
+    isBuffering = true;
+    bufferingStartTime = null;
+    stuckDetected = false;
+
+    // Reset and retry
+    if (videoElement) {
+      setTimeout(() => {
+        readyToPlay = true;
+        videoElement.load();
+      }, 1000);
     }
   }
 
@@ -386,6 +688,27 @@
     // Stop stream and go back
     streamStore.stop();
     history.back();
+  }
+
+  async function replayNative() {
+    if (!actualStreamUrl) return;
+    try {
+      await playVideo(actualStreamUrl, servedSubtitleUrl ?? undefined);
+    } catch (err) {
+      console.error("[Player] Native replay failed:", err);
+      error = "Native player failed: " + (err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function openExternal() {
+    if (!actualStreamUrl) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-opener");
+      await open(actualStreamUrl);
+      console.log("[Player] Opened stream in external player");
+    } catch (err) {
+      console.error("[Player] Failed to open external player:", err);
+    }
   }
 
   function openSubtitleMenu() {
@@ -433,33 +756,123 @@
   role="application"
   aria-label="Video player"
 >
-  {#if error}
+  {#if nativePlayerLaunched && !error}
+    <!-- Native player return screen -->
+    <div class="native-return-overlay">
+      <div class="native-return-content">
+        <h1 class="native-return-title">{title}</h1>
+        <div class="native-return-stats">
+          <span>{streamStore.progressPercent.toFixed(1)}% buffered</span>
+          <span>{streamStore.downloadSpeed}</span>
+          <span>{streamStore.peersConnected} peers</span>
+        </div>
+        <div class="native-return-buttons">
+          <button class="error-btn primary" onclick={replayNative}>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            Play Again
+          </button>
+          <button class="error-btn secondary" onclick={handleBack}>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+            Go Back
+          </button>
+        </div>
+      </div>
+    </div>
+  {:else if error}
     <div class="error-overlay">
-      <svg viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-      </svg>
-      <p>{error}</p>
-      <button onclick={handleBack}>Go Back</button>
+      <div class="error-content">
+        <div class="error-icon-container">
+          <svg viewBox="0 0 24 24" fill="currentColor" class="error-icon">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+          <div class="error-icon-ring"></div>
+        </div>
+        <h2>Stream Unavailable</h2>
+        <p class="error-message">{error}</p>
+        <div class="error-stats">
+          <div class="error-stat">
+            <span class="stat-value">{streamStore.progressPercent.toFixed(1)}%</span>
+            <span class="stat-label">Buffered</span>
+          </div>
+          <div class="error-stat">
+            <span class="stat-value">{streamStore.peersConnected}</span>
+            <span class="stat-label">Peers</span>
+          </div>
+          <div class="error-stat">
+            <span class="stat-value">{streamStore.downloadSpeed}</span>
+            <span class="stat-label">Speed</span>
+          </div>
+        </div>
+        <div class="error-buttons">
+          <button class="error-btn secondary" onclick={handleBack}>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+            Go Back
+          </button>
+          <button class="error-btn primary" onclick={retryStream}>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            Try Again
+          </button>
+          {#if !isAndroid && actualStreamUrl}
+            <button class="error-btn external" onclick={openExternal}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+              </svg>
+              Open in External Player
+            </button>
+          {/if}
+        </div>
+      </div>
     </div>
   {:else if !readyToPlay}
     <!-- Loading Splash - shown until video is ready -->
     <div class="loading-splash">
       <div class="splash-content">
         <h1 class="splash-title">{title}</h1>
-        <div class="splash-spinner"></div>
-        <p class="splash-status">{isStartingStream ? "Starting stream..." : "Buffering..."}</p>
-        <div class="splash-stats">
-          <span>Progress: {streamStore.progressPercent.toFixed(1)}%</span>
-          <span>Speed: {streamStore.downloadSpeed}</span>
-          <span>Peers: {streamStore.peersConnected}</span>
+        <div class="splash-spinner" class:spinner-slow={stuckDetected}></div>
+        <p class="splash-status">{isStartingStream ? "Connecting to peers..." : "Buffering video..."}</p>
+
+        <div class="splash-progress-bar">
+          <div class="splash-progress-fill" style="width: {Math.min(streamStore.progressPercent * 50, 100)}%"></div>
         </div>
+
+        <div class="splash-stats">
+          <div class="splash-stat">
+            <span class="splash-stat-value">{streamStore.progressPercent.toFixed(1)}%</span>
+            <span class="splash-stat-label">Buffered</span>
+          </div>
+          <div class="splash-stat">
+            <span class="splash-stat-value">{streamStore.downloadSpeed}</span>
+            <span class="splash-stat-label">Speed</span>
+          </div>
+          <div class="splash-stat">
+            <span class="splash-stat-value">{streamStore.peersConnected}</span>
+            <span class="splash-stat-label">Peers</span>
+          </div>
+        </div>
+
+        {#if stuckDetected}
+          <p class="splash-warning">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+            Low peer count - this may take longer
+          </p>
+        {/if}
+
         {#if subtitlesLoading || subtitleDownloading}
           <p class="splash-subtitle-status">Loading subtitles...</p>
         {:else if activeSubtitle}
           <p class="splash-subtitle-status">Subtitles: {activeSubtitle.language_name}</p>
-        {:else if preferredLanguage}
-          <p class="splash-subtitle-status">Searching for {preferredLanguage} subtitles...</p>
         {/if}
+
         <button class="splash-cancel" onclick={handleBack}>Cancel</button>
       </div>
     </div>
@@ -502,23 +915,40 @@
     {#if error}
       <div class="error-overlay">
         <div class="error-content">
-          <svg viewBox="0 0 24 24" fill="currentColor" class="error-icon">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-          </svg>
-          <h2>Stream Failed</h2>
-          <p>{error}</p>
+          <div class="error-icon-container">
+            <svg viewBox="0 0 24 24" fill="currentColor" class="error-icon">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+            <div class="error-icon-ring"></div>
+          </div>
+          <h2>Stream Unavailable</h2>
+          <p class="error-message">{error}</p>
+          <div class="error-stats">
+            <div class="error-stat">
+              <span class="stat-value">{streamStore.progressPercent.toFixed(1)}%</span>
+              <span class="stat-label">Buffered</span>
+            </div>
+            <div class="error-stat">
+              <span class="stat-value">{streamStore.peersConnected}</span>
+              <span class="stat-label">Peers</span>
+            </div>
+            <div class="error-stat">
+              <span class="stat-value">{streamStore.downloadSpeed}</span>
+              <span class="stat-label">Speed</span>
+            </div>
+          </div>
           <div class="error-buttons">
-            <button class="error-btn" onclick={handleBack}>
+            <button class="error-btn secondary" onclick={handleBack}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
               </svg>
               Go Back
             </button>
-            <button class="error-btn primary" onclick={() => location.reload()}>
+            <button class="error-btn primary" onclick={retryStream}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
               </svg>
-              Retry
+              Try Again
             </button>
           </div>
         </div>
@@ -526,18 +956,21 @@
     {:else if isStartingStream || isBuffering}
       <!-- Buffering/Loading Indicator -->
       <div class="buffering">
-        <div class="spinner"></div>
-        <p>{isStartingStream ? "Starting stream..." : "Buffering..."}</p>
-        <div class="stream-info">
-          {#if isStartingStream}
-            <span>Connecting to peers...</span>
-          {:else}
-            <span>Progress: {streamStore.progressPercent.toFixed(1)}%</span>
-            <span>Speed: {streamStore.downloadSpeed}</span>
-            <span>Peers: {streamStore.peersConnected}</span>
-          {/if}
+        <div class="buffering-content">
+          <div class="spinner"></div>
+          <p class="buffering-status">{isStartingStream ? "Connecting..." : "Buffering..."}</p>
+          <div class="buffering-stats">
+            {#if isStartingStream}
+              <span>Finding peers</span>
+            {:else}
+              <span>{streamStore.progressPercent.toFixed(1)}%</span>
+              <span class="stat-divider">|</span>
+              <span>{streamStore.downloadSpeed}</span>
+              <span class="stat-divider">|</span>
+              <span>{streamStore.peersConnected} peers</span>
+            {/if}
+          </div>
         </div>
-        <button class="cancel-btn" onclick={handleBack}>Cancel</button>
       </div>
     {/if}
 
@@ -763,9 +1196,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 20px;
-    background: #141414;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
     color: #fff;
+    z-index: 10;
   }
 
   /* Loading Splash */
@@ -781,68 +1214,128 @@
 
   .splash-content {
     text-align: center;
-    max-width: 500px;
+    max-width: 450px;
     padding: 40px;
   }
 
   .splash-title {
-    font-size: 2.2rem;
-    font-weight: 700;
-    margin: 0 0 40px;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0 0 32px;
     color: #fff;
-    text-shadow: 0 2px 20px rgba(229, 9, 20, 0.3);
+    line-height: 1.3;
   }
 
   .splash-spinner {
-    width: 80px;
-    height: 80px;
-    border: 5px solid rgba(229, 9, 20, 0.2);
+    width: 70px;
+    height: 70px;
+    border: 4px solid rgba(229, 9, 20, 0.15);
     border-top-color: #e50914;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 30px;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 24px;
+  }
+
+  .splash-spinner.spinner-slow {
+    animation-duration: 2s;
+    border-top-color: #ff9800;
+    border-color: rgba(255, 152, 0, 0.15);
   }
 
   .splash-status {
-    font-size: 1.3rem;
-    color: #aaa;
+    font-size: 1.1rem;
+    color: #888;
     margin: 0 0 20px;
+  }
+
+  .splash-progress-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+
+  .splash-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #e50914, #ff6b6b);
+    border-radius: 2px;
+    transition: width 0.3s ease;
   }
 
   .splash-stats {
     display: flex;
     justify-content: center;
-    gap: 24px;
-    font-size: 0.95rem;
+    gap: 40px;
+    margin-bottom: 20px;
+  }
+
+  .splash-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .splash-stat-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .splash-stat-label {
+    font-size: 0.75rem;
     color: #666;
-    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .splash-warning {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: #ff9800;
+    margin: 0 0 16px;
+    padding: 10px 16px;
+    background: rgba(255, 152, 0, 0.1);
+    border-radius: 8px;
+  }
+
+  .splash-warning svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
   }
 
   .splash-subtitle-status {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: #4caf50;
     margin: 0 0 20px;
   }
 
   .splash-cancel {
-    padding: 14px 40px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 12px 32px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
-    color: #fff;
-    font-size: 1rem;
+    color: #999;
+    font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .splash-cancel:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
   }
 
   .splash-cancel:focus {
     outline: none;
-    box-shadow: 0 0 0 3px #e50914;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.4);
   }
 
   .error-content {
@@ -851,22 +1344,85 @@
     padding: 40px;
   }
 
+  .error-icon-container {
+    position: relative;
+    width: 100px;
+    height: 100px;
+    margin: 0 auto 24px;
+  }
+
   .error-icon {
-    width: 80px;
-    height: 80px;
+    width: 60px;
+    height: 60px;
     color: #e50914;
-    margin-bottom: 20px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+  }
+
+  .error-icon-ring {
+    position: absolute;
+    inset: 0;
+    border: 3px solid rgba(229, 9, 20, 0.3);
+    border-radius: 50%;
+    animation: pulse-ring 2s ease-out infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.3);
+      opacity: 0;
+    }
   }
 
   .error-content h2 {
-    font-size: 2rem;
-    margin: 0 0 16px;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0 0 12px;
+    color: #fff;
   }
 
-  .error-content p {
-    font-size: 1.2rem;
-    color: #888;
-    margin: 0 0 30px;
+  .error-message {
+    font-size: 1.1rem;
+    color: #999;
+    margin: 0 0 24px;
+    line-height: 1.5;
+  }
+
+  .error-stats {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    margin-bottom: 32px;
+    padding: 16px 24px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+  }
+
+  .error-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .stat-value {
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .stat-label {
+    font-size: 0.8rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .error-buttons {
@@ -881,56 +1437,121 @@
     gap: 10px;
     padding: 14px 28px;
     background: rgba(255, 255, 255, 0.1);
-    border: none;
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
     color: #fff;
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .error-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
   }
 
   .error-btn:focus {
     outline: none;
-    box-shadow: 0 0 0 3px #e50914;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
   }
 
   .error-btn svg {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
+  }
+
+  .error-btn.secondary {
+    background: transparent;
   }
 
   .error-btn.primary {
     background: #e50914;
+    border-color: #e50914;
   }
 
   .error-btn.primary:hover {
     background: #f40612;
+    border-color: #f40612;
+  }
+
+  .native-return-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
+    color: #fff;
+    z-index: 10;
+  }
+
+  .native-return-content {
+    text-align: center;
+    max-width: 500px;
+    padding: 40px;
+  }
+
+  .native-return-title {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0 0 24px;
+  }
+
+  .native-return-stats {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    font-size: 0.9rem;
+    color: #888;
+    margin-bottom: 32px;
+  }
+
+  .native-return-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+
+  .error-btn.external {
+    background: #1a73e8;
+    border-color: #1a73e8;
+  }
+
+  .error-btn.external:hover {
+    background: #1565c0;
+    border-color: #1565c0;
   }
 
   .buffering {
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 20px;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.75);
     color: #fff;
+    z-index: 5;
+  }
+
+  .buffering-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 40px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 16px;
+    backdrop-filter: blur(10px);
   }
 
   .spinner {
-    width: 60px;
-    height: 60px;
-    border: 4px solid rgba(255, 255, 255, 0.2);
+    width: 48px;
+    height: 48px;
+    border: 3px solid rgba(255, 255, 255, 0.15);
     border-top-color: #e50914;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
   }
 
   @keyframes spin {
@@ -939,8 +1560,23 @@
     }
   }
 
-  .buffering p {
-    font-size: 1.3rem;
+  .buffering-status {
+    font-size: 1rem;
+    font-weight: 500;
+    margin: 0 0 8px;
+    color: #fff;
+  }
+
+  .buffering-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #888;
+  }
+
+  .stat-divider {
+    color: #444;
   }
 
   .cancel-btn {

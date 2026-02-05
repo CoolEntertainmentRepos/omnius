@@ -5,7 +5,7 @@ use super::types::*;
 
 // Free OMDB API - limited requests but works for our use case
 // Users can get their own key at https://www.omdbapi.com/apikey.aspx
-const OMDB_API_KEY: &str = "a29c1692"; // Public demo key
+const OMDB_API_KEY: &str = "trilogy"; // Public demo key
 const OMDB_BASE_URL: &str = "https://www.omdbapi.com/";
 
 pub struct OmdbClient {

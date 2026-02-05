@@ -105,8 +105,8 @@ echo -e "\n${BLUE}=== Building Android TV APKs ===${NC}"
 
 # Set up Android build environment
 export JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home
-export ANDROID_HOME=~/Android/sdk
-export ANDROID_NDK_HOME=~/Android/sdk/ndk/27.0.12077973
+export ANDROID_HOME=~/Library/Android/sdk
+export ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/28.2.13676358
 export NDK_HOME=$ANDROID_NDK_HOME
 TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64
 export PATH=$TOOLCHAIN/bin:$PATH

@@ -108,9 +108,13 @@
     text-decoration: none;
   }
 
-  /* Global TV focus styles */
-  :global(*:focus-visible) {
+  /* Global TV focus styles - exclude movie cards which have their own styles */
+  :global(*:focus-visible:not(.movie-card)) {
     outline: 3px solid #e50914;
     outline-offset: 2px;
+  }
+
+  :global(.movie-card:focus-visible) {
+    outline: none !important;
   }
 </style>

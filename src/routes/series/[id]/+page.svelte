@@ -20,8 +20,10 @@
   let selectedTorrent = $state<EpisodeTorrent | null>(null);
   let isStartingStream = $state(false);
   let streamError = $state<string | null>(null);
+  let unmounted = false;
 
   async function loadSeries(id: number) {
+    if (unmounted) return;
     loading = true;
     error = null;
     selectedSeason = null;
@@ -31,6 +33,7 @@
 
     try {
       const data = await getSeriesDetails(id);
+      if (unmounted) return;
       if (data) {
         series = data;
         // Auto-select first season
@@ -58,7 +61,7 @@
   }
 
   async function selectSeason(seasonNum: number) {
-    if (selectedSeason === seasonNum) return;
+    if (unmounted || selectedSeason === seasonNum) return;
 
     selectedSeason = seasonNum;
     selectedEpisode = null;
@@ -66,7 +69,9 @@
     episodesLoading = true;
 
     try {
-      episodes = await getSeasonEpisodes(seriesId, seasonNum);
+      const data = await getSeasonEpisodes(seriesId, seasonNum);
+      if (unmounted) return;
+      episodes = data;
       // Auto-select first episode with torrents
       if (episodes.length > 0) {
         const episodeWithTorrents = episodes.find(e => e.torrents && e.torrents.length > 0);
@@ -118,6 +123,10 @@
         title: `${series.title} S${String(selectedEpisode.season_number).padStart(2, '0')}E${String(selectedEpisode.episode_number).padStart(2, '0')} - ${selectedEpisode.title}`,
         imdb: series.imdb_code || "",
       });
+      // Pass file_index for season pack torrents
+      if (selectedTorrent.file_index !== undefined && selectedTorrent.file_index !== null) {
+        params.set("fileIndex", String(selectedTorrent.file_index));
+      }
       await goto(`/player/${selectedTorrent.hash}?${params.toString()}`);
     } catch (err) {
       console.error("Navigation failed:", err);
@@ -135,6 +144,7 @@
     }
 
     return () => {
+      unmounted = true;
       if (browser) {
         document.removeEventListener('focus', handleFocusScroll, true);
       }
@@ -183,7 +193,7 @@
       </svg>
       <p>{error}</p>
       <div class="error-buttons">
-        <button class="back-button" onclick={() => goto("/")}>
+        <button class="back-button" onclick={() => goto('/?tab=tvshows')}>
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
           </svg>
@@ -203,7 +213,7 @@
 
     <!-- Back Button -->
     <nav class="nav">
-      <button class="back-btn" onclick={() => goto("/")} aria-label="Go back">
+      <button class="back-btn" onclick={() => goto('/?tab=tvshows')} aria-label="Go back">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
         </svg>

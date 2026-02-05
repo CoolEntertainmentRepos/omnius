@@ -86,8 +86,9 @@ impl TorrentManager {
     }
 
     /// Add a torrent from a magnet link and start streaming
-    pub async fn start_stream(&self, magnet_uri: &str) -> Result<StreamInfo, String> {
-        println!("[TorrentManager::start_stream] Creating AddTorrent from URI...");
+    /// If file_index is provided, stream that specific file; otherwise auto-select largest video
+    pub async fn start_stream(&self, magnet_uri: &str, file_index: Option<usize>) -> Result<StreamInfo, String> {
+        println!("[TorrentManager::start_stream] Creating AddTorrent from URI, file_index: {:?}", file_index);
         let add_torrent = AddTorrent::from_url(magnet_uri);
 
         println!("[TorrentManager::start_stream] Adding torrent to session...");
@@ -131,8 +132,17 @@ impl TorrentManager {
         // Get the info hash (using hex crate to encode the 20-byte hash)
         let info_hash = hex::encode(handle.info_hash().0);
 
-        // Find the largest video file
-        let video_file = self.find_largest_video_file(&handle)?;
+        // Get the video file - either by specified index or find largest
+        let video_file = match file_index {
+            Some(idx) => {
+                println!("[TorrentManager::start_stream] Using specified file_index: {}", idx);
+                self.get_file_at_index(&handle, idx)?
+            }
+            None => {
+                println!("[TorrentManager::start_stream] Auto-selecting largest video file");
+                self.find_largest_video_file(&handle)?
+            }
+        };
 
         // Store the active torrent
         {
@@ -163,6 +173,29 @@ impl TorrentManager {
             total_size: video_file.size,
             file_index: video_file.index,
         })
+    }
+
+    /// Get file info at a specific index
+    fn get_file_at_index(
+        &self,
+        handle: &ManagedTorrentHandle,
+        idx: usize,
+    ) -> Result<TorrentFile, String> {
+        let result = handle
+            .with_metadata(|metadata| {
+                metadata.file_infos.get(idx).map(|file_info| {
+                    let filename = file_info.relative_filename.to_string_lossy().to_string();
+                    TorrentFile {
+                        index: idx,
+                        name: filename.clone(),
+                        size: file_info.len,
+                        is_video: is_video_file(&filename),
+                    }
+                })
+            })
+            .map_err(|e| format!("Failed to get metadata: {}", e))?;
+
+        result.ok_or_else(|| format!("File not found at index {}", idx))
     }
 
     /// Find the largest video file in a torrent
@@ -304,5 +337,11 @@ impl TorrentManager {
     /// Get the stream server port
     pub fn stream_port(&self) -> u16 {
         self.stream_server.port()
+    }
+
+    /// Store a VTT subtitle in the stream server and return its URL
+    pub async fn store_subtitle(&self, id: String, vtt_content: String) -> String {
+        self.stream_server.store_subtitle(id.clone(), vtt_content).await;
+        format!("http://127.0.0.1:{}/subtitle/{}", self.stream_server.port(), id)
     }
 }

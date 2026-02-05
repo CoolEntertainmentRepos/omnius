@@ -9,7 +9,8 @@
   import SeriesRow from "$lib/components/SeriesRow.svelte";
   import SeriesGrid from "$lib/components/SeriesGrid.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, type CuratedList, type HomeSection } from "$lib/api/commands";
+  import SearchSection from "$lib/components/SearchSection.svelte";
+  import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
   import { makeFocusable, addSection } from "$lib/utils/tvNavigation";
   import type { Movie, MovieRating, Series, ListSeriesParams, Channel } from "$lib/api/types";
@@ -163,7 +164,18 @@
   ];
 
   onMount(async () => {
-    await loadHomeContent();
+    // Check for tab parameter in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const tab = urlParams.get('tab');
+    if (tab === 'tvshows' || tab === 'tv') {
+      await handleNavClick('tv');
+    } else if (tab === 'movies') {
+      await handleNavClick('movies');
+    } else if (tab === 'live' || tab === 'channels') {
+      await handleNavClick('live');
+    } else {
+      await loadHomeContent();
+    }
     // Refresh focusable elements and set initial focus
     setTimeout(() => {
       makeFocusable();
@@ -424,10 +436,10 @@
     channelsError = null;
 
     try {
-      // Check cache first (1 hour TTL for channels since they come from local server now)
+      // Check cache first (1 hour TTL for channels)
       if (browser) {
-        const cached = localStorage.getItem('iptv_data_v3');
-        const cacheTime = localStorage.getItem('iptv_data_v3_time');
+        const cached = localStorage.getItem('iptv_data_v4');
+        const cacheTime = localStorage.getItem('iptv_data_v4_time');
         const oneHour = 60 * 60 * 1000;
 
         if (cached && cacheTime && Date.now() - parseInt(cacheTime) < oneHour) {
@@ -442,28 +454,41 @@
         }
       }
 
-      console.log('[IPTV] Fetching from local server');
+      console.log('[IPTV] Fetching from API');
 
-      // Fetch from local torrent-server (much faster than iptv-org)
-      const response = await fetch('http://192.168.1.4:8080/api/channels');
-      if (!response.ok) throw new Error('Failed to fetch channels');
+      // Fetch channels, countries, and categories in parallel
+      const [channelsData, countries, categories] = await Promise.all([
+        listChannels({ limit: 10000 }),
+        getChannelCountries(),
+        getChannelCategories()
+      ]);
 
-      const data = await response.json();
-
-      iptvChannels = data.channels || [];
-      iptvCountries = data.countries || [];
-      iptvCategories = data.categories || [];
+      iptvChannels = (channelsData.channels || []).map(ch => ({
+        id: ch.id,
+        name: ch.name,
+        country: ch.country || '',
+        languages: ch.languages || [],
+        categories: ch.categories || [],
+        logo: ch.logo,
+        url: ch.stream_url
+      }));
+      iptvCountries = countries.map(c => ({ code: c.code, name: c.name, flag: c.flag || '' }));
+      iptvCategories = categories.map(c => ({ id: c.id, name: c.name }));
       updateChannelGroups();
 
-      // Cache for 1 hour (server syncs daily)
+      // Cache for 1 hour
       if (browser) {
-        localStorage.setItem('iptv_data_v3', JSON.stringify(data));
-        localStorage.setItem('iptv_data_v3_time', Date.now().toString());
+        localStorage.setItem('iptv_data_v4', JSON.stringify({
+          channels: iptvChannels,
+          countries: iptvCountries,
+          categories: iptvCategories
+        }));
+        localStorage.setItem('iptv_data_v4_time', Date.now().toString());
       }
 
-      console.log(`[IPTV] Loaded ${iptvChannels.length} channels from local server`);
+      console.log(`[IPTV] Loaded ${iptvChannels.length} channels from API`);
     } catch (err) {
-      console.error('[IPTV] Failed to load from local server:', err);
+      console.error('[IPTV] Failed to load channels:', err);
       channelsError = 'Failed to load channels. Is the server running?';
     } finally {
       channelsLoading = false;
@@ -593,13 +618,18 @@
   }
 
   async function handleMovieSearch() {
-    if (!movieSearchQuery.trim()) return;
+    const query = movieSearchQuery.trim();
+    if (!query) return;
     movieSearchLoading = true;
+    console.log('[MovieSearch] Searching for:', query);
     try {
-      const data = await searchMovies(movieSearchQuery, 1, 50);
-      movieSearchResults = data.movies || [];
+      // Use listMovies with query_term - same as main search
+      const data = await listMovies({ query_term: query, limit: 50, page: 1 });
+      console.log('[MovieSearch] Response:', data);
+      movieSearchResults = data?.movies || [];
+      console.log('[MovieSearch] Found:', movieSearchResults.length, 'movies');
     } catch (err) {
-      console.error('[Search] Movie search failed:', err);
+      console.error('[MovieSearch] Failed:', err);
       movieSearchResults = [];
     } finally {
       movieSearchLoading = false;
@@ -1190,31 +1220,7 @@
           {/if}
         {:else if tvBrowseMode === 'search'}
           <!-- TV Series Search -->
-          <div class="search-section">
-            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleTVSearch(); }}>
-              <input
-                type="text"
-                class="inline-search-input"
-                placeholder="Search TV series..."
-                bind:value={tvSearchQuery}
-              />
-              <button type="submit" class="inline-search-btn" disabled={tvSearchLoading}>
-                {#if tvSearchLoading}
-                  <div class="spinner small tv-spinner"></div>
-                {:else}
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                  </svg>
-                {/if}
-              </button>
-            </form>
-            {#if tvSearchResults.length > 0}
-              <p class="search-results-count">{tvSearchResults.length} results for "{tvSearchQuery}"</p>
-              <SeriesGrid series={tvSearchResults} loading={false} error={null} />
-            {:else if tvSearchQuery && !tvSearchLoading}
-              <p class="no-results">No TV series found for "{tvSearchQuery}"</p>
-            {/if}
-          </div>
+          <SearchSection type="tvshows" />
         {/if}
       </div>
     {:else if activeNav === "live"}
@@ -1269,49 +1275,7 @@
           </div>
         {:else if channelGroupBy === 'search'}
           <!-- Channel Search -->
-          <div class="search-section">
-            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleChannelSearch(); }}>
-              <input
-                type="text"
-                class="inline-search-input"
-                placeholder="Search channels..."
-                bind:value={channelSearchQuery}
-              />
-              <button type="submit" class="inline-search-btn" disabled={channelSearchLoading}>
-                {#if channelSearchLoading}
-                  <div class="spinner small"></div>
-                {:else}
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                  </svg>
-                {/if}
-              </button>
-            </form>
-            {#if channelSearchResults.length > 0}
-              <p class="search-results-count">{channelSearchResults.length} results for "{channelSearchQuery}"</p>
-              <div class="channels-list">
-                {#each channelSearchResults as channel (channel.id)}
-                  <button class="channel-list-item" onclick={() => goto(`/player/live?url=${encodeURIComponent(channel.stream_url || '')}&title=${encodeURIComponent(channel.name)}`)}>
-                    {#if channel.logo}
-                      <img src={channel.logo} alt="" class="channel-list-logo" />
-                    {:else}
-                      <div class="channel-list-logo-placeholder">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                        </svg>
-                      </div>
-                    {/if}
-                    <span class="channel-list-name">{channel.name}</span>
-                    <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5v14l11-7z"/>
-                    </svg>
-                  </button>
-                {/each}
-              </div>
-            {:else if channelSearchQuery && !channelSearchLoading}
-              <p class="no-results">No channels found for "{channelSearchQuery}"</p>
-            {/if}
-          </div>
+          <SearchSection type="channels" channels={iptvChannels.map(ch => ({ id: ch.id, name: ch.name, logo: ch.logo, stream_url: ch.url, country: ch.country, categories: ch.categories, languages: ch.languages }))} />
         {:else if selectedGroup}
           <div class="genre-header">
             <button class="back-btn" onclick={() => selectedGroup = null} aria-label="Go back">
@@ -1494,31 +1458,7 @@
           {/if}
         {:else if movieBrowseMode === 'search'}
           <!-- Movie Search -->
-          <div class="search-section">
-            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleMovieSearch(); }}>
-              <input
-                type="text"
-                class="inline-search-input"
-                placeholder="Search movies..."
-                bind:value={movieSearchQuery}
-              />
-              <button type="submit" class="inline-search-btn" disabled={movieSearchLoading}>
-                {#if movieSearchLoading}
-                  <div class="spinner small"></div>
-                {:else}
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                  </svg>
-                {/if}
-              </button>
-            </form>
-            {#if movieSearchResults.length > 0}
-              <p class="search-results-count">{movieSearchResults.length} results for "{movieSearchQuery}"</p>
-              <MovieGrid movies={movieSearchResults} loading={false} error={null} />
-            {:else if movieSearchQuery && !movieSearchLoading}
-              <p class="no-results">No movies found for "{movieSearchQuery}"</p>
-            {/if}
-          </div>
+          <SearchSection type="movies" />
         {/if}
       </div>
     {:else if activeNav === "favorites"}

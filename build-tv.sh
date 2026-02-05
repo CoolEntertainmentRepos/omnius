@@ -3,9 +3,9 @@ set -e
 
 # Android TV Build Script for Streamer
 
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home
-export ANDROID_HOME=~/Android/sdk
-export ANDROID_NDK_HOME=~/Android/sdk/ndk/27.0.12077973
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export ANDROID_HOME=~/Library/Android/sdk
+export ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/28.2.13676358
 export NDK_HOME=$ANDROID_NDK_HOME
 
 # Set up toolchain for ARM cross-compilation
@@ -20,6 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KEYSTORE="$SCRIPT_DIR/debug.keystore"
 UNSIGNED_APK="$SCRIPT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 SIGNED_APK="$SCRIPT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-signed.apk"
+ADB=~/Library/Android/sdk/platform-tools/adb
+DEVICE_IP="192.168.1.128:5555"
 
 echo "=== Building Android APK with Tauri ==="
 pnpm tauri android build --target armv7
@@ -32,7 +34,10 @@ $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
   --out "$SIGNED_APK" \
   "$UNSIGNED_APK"
 
-echo "=== Installing on Mi Box ==="
-~/Android/sdk/platform-tools/adb -s 192.168.1.155:5555 install -r "$SIGNED_APK"
+echo "=== Connecting to device ==="
+$ADB connect $DEVICE_IP
+
+echo "=== Installing on device ==="
+$ADB -s $DEVICE_IP install -r "$SIGNED_APK"
 
 echo "=== Done! ==="

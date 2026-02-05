@@ -221,6 +221,7 @@ export interface EpisodeTorrent {
   peers: number;
   size: string;
   size_bytes: number;
+  file_index?: number;
   release_group?: string;
   date_uploaded: string;
   date_uploaded_unix: number;

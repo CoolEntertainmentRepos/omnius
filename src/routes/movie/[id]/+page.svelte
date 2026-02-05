@@ -4,15 +4,18 @@
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import MovieCard from "$lib/components/MovieCard.svelte";
-  import { getMovieDetails, getMovieSuggestions, getMovieRating, startStream } from "$lib/api/commands";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import { getMovieDetails, getMovieSuggestions, getMovieRating, startStream, syncMovieToLocal, getFranchiseMovies } from "$lib/api/commands";
   import { streamStore } from "$lib/stores/stream.svelte";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
+  import { remindersStore } from "$lib/stores/reminders.svelte";
   import type { MovieDetails, Movie, MovieRating, Torrent } from "$lib/api/types";
 
   let movieId = $derived(parseInt($page.params.id || "0", 10));
 
   let movie = $state<MovieDetails | null>(null);
   let suggestions = $state<Movie[]>([]);
+  let franchiseMovies = $state<Movie[]>([]);
   let rating = $state<MovieRating | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -25,6 +28,7 @@
     error = null;
     selectedTorrent = null;
     rating = null;
+    franchiseMovies = [];
 
     try {
       const [movieData, suggestionsData] = await Promise.all([
@@ -34,6 +38,18 @@
 
       movie = movieData;
       suggestions = suggestionsData;
+
+      console.log("[Movie] Loaded movie:", movie.title, "franchise:", movie.franchise);
+
+      // If movie has a franchise, fetch other movies in the franchise
+      if (movie.franchise) {
+        console.log("[Movie] Fetching franchise movies for:", movie.franchise);
+        const movies = await getFranchiseMovies(id);
+        franchiseMovies = movies;
+        console.log("[Movie] Franchise movies loaded:", movies.length);
+      } else {
+        console.log("[Movie] No franchise for this movie");
+      }
 
       // Auto-select best quality (only torrents with seeds > 0)
       if (movie.torrents && movie.torrents.length > 0) {
@@ -57,6 +73,12 @@
           .catch((err) => {
             console.warn("Failed to fetch rating:", err);
           });
+      }
+
+      // Sync movie to local database if it came from external search (YTS)
+      // This grows the DB organically when users discover new movies
+      if (movie.provider === 'yts' || !movie.provider) {
+        syncMovieToLocal(movie);
       }
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to load movie";
@@ -115,6 +137,8 @@
       const params = new URLSearchParams({
         title: movie.title,
         imdb: movie.imdb_code || "",
+        movie_id: movie.id.toString(),
+        quality: selectedTorrent.quality || "",
       });
       await goto(`/player/${selectedTorrent.hash}?${params.toString()}`);
     } catch (err) {
@@ -152,6 +176,8 @@
   <title>{movie ? `${movie.title} - Streamer` : "Loading... - Streamer"}</title>
 </svelte:head>
 
+<Sidebar />
+
 <div class="page">
   {#if loading}
     <div class="loading-container">
@@ -167,7 +193,7 @@
       </svg>
       <p>{error}</p>
       <div class="error-buttons">
-        <button class="back-button" onclick={() => goto("/")}>
+        <button class="back-button" onclick={() => goto('/?tab=movies')}>
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
           </svg>
@@ -187,7 +213,7 @@
 
     <!-- Back Button -->
     <nav class="nav">
-      <button class="back-btn" onclick={() => goto("/")} aria-label="Go back">
+      <button class="back-btn" onclick={() => goto('/?tab=movies')} aria-label="Go back">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
         </svg>
@@ -223,25 +249,26 @@
 
           <!-- Ratings Row -->
           <div class="ratings-row">
-            {#if rating?.imdb_rating}
+            {#if movie.imdb_rating || rating?.imdb_rating}
               <span class="rating-badge imdb">
                 <span class="rating-label">IMDb</span>
-                <span class="rating-value">{rating.imdb_rating.toFixed(1)}</span>
-                {#if rating.imdb_votes}
-                  <span class="rating-votes">{rating.imdb_votes}</span>
+                <span class="rating-value">{(movie.imdb_rating || rating?.imdb_rating || 0).toFixed(1)}</span>
+                {#if movie.imdb_votes || rating?.imdb_votes}
+                  <span class="rating-votes">{movie.imdb_votes || rating?.imdb_votes}</span>
                 {/if}
               </span>
             {/if}
-            {#if rating?.rotten_tomatoes}
+            {#if movie.rotten_tomatoes || rating?.rotten_tomatoes}
               <span class="rating-badge rt">
                 <span class="rating-label">🍅 Rotten</span>
-                <span class="rating-value">{rating.rotten_tomatoes}%</span>
+                <span class="rating-value">{movie.rotten_tomatoes || rating?.rotten_tomatoes}%</span>
               </span>
             {/if}
-            {#if rating?.metascore}
-              <span class="rating-badge meta" class:green={rating.metascore >= 61} class:yellow={rating.metascore >= 40 && rating.metascore < 61} class:red={rating.metascore < 40}>
+            {#if movie.metacritic || rating?.metascore}
+              {@const metaScore = movie.metacritic || rating?.metascore || 0}
+              <span class="rating-badge meta" class:green={metaScore >= 61} class:yellow={metaScore >= 40 && metaScore < 61} class:red={metaScore < 40}>
                 <span class="rating-label">Metascore</span>
-                <span class="rating-value">{rating.metascore}</span>
+                <span class="rating-value">{metaScore}</span>
               </span>
             {/if}
           </div>
@@ -254,17 +281,29 @@
             </div>
           {/if}
 
-          <!-- Director & Cast -->
-          {#if rating?.director}
+          <!-- Director & Cast & Writers -->
+          {#if movie.director || rating?.director}
             <div class="crew-info">
               <span class="crew-label">Director</span>
-              <span class="crew-value">{rating.director}</span>
+              <span class="crew-value">{movie.director || rating?.director}</span>
             </div>
           {/if}
-          {#if rating?.actors}
+          {#if movie.writers && movie.writers.length > 0}
+            <div class="crew-info">
+              <span class="crew-label">Writers</span>
+              <span class="crew-value">{movie.writers.slice(0, 3).join(', ')}</span>
+            </div>
+          {/if}
+          {#if rating?.actors || (movie.cast && movie.cast.length > 0)}
             <div class="crew-info">
               <span class="crew-label">Stars</span>
-              <span class="crew-value">{rating.actors}</span>
+              <span class="crew-value">{rating?.actors || movie.cast?.slice(0, 3).map(c => c.name).join(', ')}</span>
+            </div>
+          {/if}
+          {#if movie.country || rating?.country}
+            <div class="crew-info">
+              <span class="crew-label">Country</span>
+              <span class="crew-value">{movie.country || rating?.country}</span>
             </div>
           {/if}
 
@@ -273,25 +312,70 @@
           </p>
 
           <!-- Extra Info -->
-          {#if rating?.awards && rating.awards !== "N/A"}
+          {#if (movie.awards && movie.awards !== "N/A") || (rating?.awards && rating.awards !== "N/A")}
             <div class="awards">
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2C9.24 2 7 4.24 7 7v2H5v2h2v9c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2v-9h2V9h-2V7c0-2.76-2.24-5-5-5zm-2 5c0-1.1.9-2 2-2s2 .9 2 2v2H10V7zm5 13H9v-8h6v8z"/>
               </svg>
-              {rating.awards}
+              {movie.awards || rating?.awards}
             </div>
           {/if}
-          {#if rating?.box_office}
+          {#if movie.budget}
+            <div class="budget-info">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+              </svg>
+              Budget: {movie.budget}
+            </div>
+          {/if}
+          {#if movie.box_office_gross || rating?.box_office}
             <div class="box-office">
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.91s4.18 1.39 4.18 3.91c-.01 1.83-1.38 2.83-3.12 3.16z"/>
               </svg>
-              Box Office: {rating.box_office}
+              Box Office: {movie.box_office_gross || rating?.box_office}
             </div>
           {/if}
 
+          <!-- Coming Soon Section -->
+          {#if movie.status === 'coming_soon'}
+            <div class="coming-soon-section">
+              <div class="coming-soon-badge">Coming Soon</div>
+              {#if movie.release_date}
+                <p class="release-date">Expected Release: {new Date(movie.release_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+              {/if}
+              <div class="remind-section">
+                <button
+                  class="remind-btn"
+                  class:active={remindersStore.isReminded(movie.imdb_code)}
+                  onclick={() => movie && remindersStore.toggle(movie.imdb_code, movie.title, movie.medium_cover_image)}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    {#if remindersStore.isReminded(movie.imdb_code)}
+                      <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
+                    {:else}
+                      <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/>
+                    {/if}
+                  </svg>
+                  {remindersStore.isReminded(movie.imdb_code) ? "Reminder Set" : "Remind Me"}
+                </button>
+                {#if movie.yt_trailer_code}
+                  <a
+                    href={getYouTubeUrl(movie.yt_trailer_code)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="trailer-btn"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z"/>
+                    </svg>
+                    Watch Trailer
+                  </a>
+                {/if}
+              </div>
+            </div>
+          {:else if movie.torrents && movie.torrents.filter(t => t.seeds > 0).length > 0}
           <!-- Quality Selector - only show torrents with seeds -->
-          {#if movie.torrents && movie.torrents.filter(t => t.seeds > 0).length > 0}
             <div class="quality-section">
               <h3>Select Quality</h3>
               <div class="quality-options">
@@ -402,8 +486,20 @@
         </div>
       </div>
 
-      <!-- Similar Movies -->
-      {#if suggestions.length > 0}
+      <!-- Franchise Movies (if part of a franchise) -->
+      {#if franchiseMovies.length > 0 && movie?.franchise}
+        <section class="suggestions-section franchise-section">
+          <h2>{movie.franchise}</h2>
+          <div class="suggestions-grid">
+            {#each franchiseMovies as franchiseMovie (franchiseMovie.id)}
+              <MovieCard movie={franchiseMovie} onclick={() => handleSuggestionClick(franchiseMovie)} />
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <!-- Similar Movies (only show if no franchise) -->
+      {#if suggestions.length > 0 && franchiseMovies.length === 0}
         <section class="suggestions-section">
           <h2>Similar Movies</h2>
           <div class="suggestions-grid">
@@ -423,6 +519,7 @@
     background: #141414;
     color: #fff;
     position: relative;
+    margin-left: 70px;
   }
 
   .backdrop {
@@ -668,6 +765,94 @@
 
   .box-office {
     background: rgba(46, 204, 113, 0.1);
+    color: #2ecc71;
+  }
+
+  .budget-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: rgba(52, 152, 219, 0.1);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    font-size: 0.95rem;
+    color: #3498db;
+  }
+
+  .budget-info svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  /* Coming Soon Section */
+  .coming-soon-section {
+    margin-bottom: 24px;
+    padding: 24px;
+    background: rgba(229, 9, 20, 0.1);
+    border: 1px solid rgba(229, 9, 20, 0.3);
+    border-radius: 12px;
+  }
+
+  .coming-soon-badge {
+    display: inline-block;
+    padding: 8px 16px;
+    background: #e50914;
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 20px;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .release-date {
+    font-size: 1.1rem;
+    color: #ccc;
+    margin-bottom: 20px;
+  }
+
+  .remind-section {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .remind-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 32px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1.2rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .remind-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .remind-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(229, 9, 20, 0.5);
+  }
+
+  .remind-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .remind-btn.active {
+    background: rgba(46, 204, 113, 0.15);
+    border-color: #2ecc71;
     color: #2ecc71;
   }
 
@@ -1084,6 +1269,12 @@
     }
   }
 
+  @media (max-width: 900px) {
+    .page {
+      margin-left: 60px;
+    }
+  }
+
   @media (max-width: 768px) {
     .nav {
       padding: 20px;
@@ -1148,6 +1339,12 @@
 
     .suggestions-grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+  }
+
+  @media (max-width: 600px) {
+    .page {
+      margin-left: 0;
     }
   }
 </style>

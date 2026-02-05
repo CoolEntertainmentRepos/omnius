@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use tauri::Manager;
 
 const GITHUB_OWNER: &str = "flakerim";
 const GITHUB_REPO: &str = "streamer";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// Update server URL (your own API for more control)
+const UPDATE_SERVER_URL: &str = "https://api.omnius.lol/api/v2/app_update";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateInfo {

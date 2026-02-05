@@ -147,9 +147,8 @@ impl SubtitleClient {
         })
     }
 
-    /// Download a subtitle file from URL and convert to VTT
-    /// Returns a base64 data URL that can be used directly in <track> element
-    pub async fn download_subtitle(&self, url: &str) -> Result<String, String> {
+    /// Download a subtitle file from URL and convert to raw VTT string
+    pub async fn download_subtitle_raw(&self, url: &str) -> Result<String, String> {
         println!("[SubtitleClient] Downloading subtitle from: {}", url);
 
         let response = self.client
@@ -170,22 +169,25 @@ impl SubtitleClient {
 
         // OpenSubtitles returns gzipped files
         let content = if bytes.starts_with(&[0x1f, 0x8b]) {
-            // Gzip magic bytes
             self.decompress_gzip(&bytes)?
         } else if bytes.starts_with(&[0x50, 0x4B]) {
-            // ZIP file magic bytes
             self.extract_subtitle_from_zip(&bytes)?
         } else {
-            // Assume it's raw subtitle text
             String::from_utf8(bytes.to_vec())
                 .unwrap_or_else(|_| {
-                    // Fallback: treat as Latin-1/Windows-1252
                     bytes.iter().map(|&b| b as char).collect::<String>()
                 })
         };
 
-        // Detect format and convert to VTT
         let vtt_content = self.convert_to_vtt(&content)?;
+        println!("[SubtitleClient] Converted to VTT ({} chars)", vtt_content.len());
+        Ok(vtt_content)
+    }
+
+    /// Download a subtitle file from URL and convert to VTT
+    /// Returns a base64 data URL that can be used directly in <track> element
+    pub async fn download_subtitle(&self, url: &str) -> Result<String, String> {
+        let vtt_content = self.download_subtitle_raw(url).await?;
 
         // Encode as base64 data URL
         let base64_content = base64::Engine::encode(

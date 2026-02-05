@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -19,6 +20,8 @@ use super::types::TorrentError;
 pub struct StreamServerState {
     /// Reference to get torrent handles for streaming
     pub manager: RwLock<Option<Arc<super::manager::TorrentManager>>>,
+    /// Stored subtitle VTT content, keyed by ID
+    pub subtitles: RwLock<HashMap<String, String>>,
 }
 
 /// HTTP server for streaming torrent video files
@@ -34,6 +37,7 @@ impl StreamServer {
             port,
             state: Arc::new(StreamServerState {
                 manager: RwLock::new(None),
+                subtitles: RwLock::new(HashMap::new()),
             }),
         }
     }
@@ -54,6 +58,7 @@ impl StreamServer {
         // Build the router
         let app = Router::new()
             .route("/stream/{info_hash}/{file_index}", get(stream_handler))
+            .route("/subtitle/{id}", get(subtitle_handler))
             .route("/health", get(health_handler))
             .layer(
                 CorsLayer::new()
@@ -78,11 +83,33 @@ impl StreamServer {
     pub fn port(&self) -> u16 {
         self.port
     }
+
+    /// Store a VTT subtitle and return its ID
+    pub async fn store_subtitle(&self, id: String, vtt_content: String) {
+        let mut subs = self.state.subtitles.write().await;
+        subs.insert(id, vtt_content);
+    }
 }
 
 /// Health check endpoint
 async fn health_handler() -> impl IntoResponse {
     "OK"
+}
+
+/// Serve a stored VTT subtitle by ID
+async fn subtitle_handler(
+    State(state): State<Arc<StreamServerState>>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    let subs = state.subtitles.read().await;
+    let vtt = subs.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/vtt; charset=utf-8")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from(vtt.clone()))
+        .unwrap())
 }
 
 /// Stream handler that supports Range requests for video seeking

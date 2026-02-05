@@ -1,43 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
-    <!-- TV Features - not required so app works on both TV and mobile -->
+    <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Streamer"
-        android:allowBackup="true"
-        android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
-        android:hardwareAccelerated="true"
-        android:largeHeap="true">
-
+        android:banner="@drawable/tv_banner"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.streamer"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
             android:name=".MainActivity"
-            android:label="@string/app_name"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:theme="@style/Theme.Streamer"
-            android:screenOrientation="landscape">
-
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <!-- Leanback launcher for Android TV -->
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-                <!-- Standard launcher for phones/tablets -->
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

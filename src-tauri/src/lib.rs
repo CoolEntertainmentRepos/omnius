@@ -11,8 +11,11 @@ mod yts;
 
 use commands::{
     get_movie_details, get_movie_rating, get_movie_suggestions, list_movies, start_stream,
-    get_stream_status, stop_stream, check_for_updates, get_app_version, search_subtitles,
+    get_stream_status, stop_stream, check_stream_ready, serve_subtitle,
+    check_for_updates, get_app_version, search_subtitles,
     get_subtitle_languages, download_subtitle, get_storage_info, clear_cache, get_download_path,
+    // Local API commands
+    list_movies_local, get_movie_details_local, get_movie_suggestions_local,
     TorrentManagerState,
 };
 use omdb::OmdbClient;
@@ -31,6 +34,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_videoplayer::init())
         .manage(yts_client)
         .manage(omdb_client)
         .manage(subtitle_client)
@@ -93,6 +98,8 @@ pub fn run() {
             start_stream,
             get_stream_status,
             stop_stream,
+            check_stream_ready,
+            serve_subtitle,
             check_for_updates,
             get_app_version,
             search_subtitles,

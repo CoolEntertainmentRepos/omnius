@@ -10,9 +10,10 @@
     hasMore?: boolean;
     loadingMore?: boolean;
     onLoadMore?: () => void;
+    onSeriesClick?: (series: Series) => void;
   }
 
-  let { series, loading = false, error = null, hasMore = false, loadingMore = false, onLoadMore }: Props = $props();
+  let { series, loading = false, error = null, hasMore = false, loadingMore = false, onLoadMore, onSeriesClick }: Props = $props();
 
   let previousSeriesCount = $state(0);
   let gridContainer: HTMLDivElement;
@@ -35,7 +36,11 @@
   });
 
   function handleSeriesClick(s: Series) {
-    goto(`/series/${s.id}`);
+    if (onSeriesClick) {
+      onSeriesClick(s);
+    } else {
+      goto(`/series/${s.id}`);
+    }
   }
 </script>
 

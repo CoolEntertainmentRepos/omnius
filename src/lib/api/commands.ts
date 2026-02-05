@@ -14,8 +14,8 @@ import type {
   StreamStats,
 } from "./types";
 
-// Local torrent-server API
-const API_URL = 'http://localhost:8080';
+// Local torrent-server API - change this to your server URL
+export const API_URL = 'https://api.omnius.lol';
 
 /**
  * Fetch a list of movies from LOCAL torrent-server (cached)
@@ -46,7 +46,26 @@ export async function listMovies(params: ListMoviesParams, forceRefresh: boolean
 }
 
 /**
- * Get detailed information about a specific movie from LOCAL torrent-server (cached)
+ * Get detailed information about a specific movie from YTS directly via Tauri
+ */
+export async function getMovieDetailsFromYTS(
+  movieId: number,
+  withCast: boolean = true,
+  withImages: boolean = true
+): Promise<MovieDetails> {
+  console.log("[getMovieDetailsFromYTS] Fetching from YTS, movieId:", movieId);
+  const details = await invoke<MovieDetails>("get_movie_details", {
+    movieId,
+    withCast,
+    withImages
+  });
+  console.log("[getMovieDetailsFromYTS] Success:", details.title);
+  return details;
+}
+
+/**
+ * Get detailed information about a specific movie
+ * Tries LOCAL server first, falls back to YTS if not found
  */
 export async function getMovieDetails(
   movieId: number,
@@ -59,17 +78,36 @@ export async function getMovieDetails(
     cacheKey,
     CACHE_TTL.MOVIE_DETAILS,
     async () => {
-      console.log("[getMovieDetails] Fetching from LOCAL server, movieId:", movieId);
-      const response = await fetch(`${API_URL}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch movie details: ${response.status}`);
+      // Try local server first
+      try {
+        console.log("[getMovieDetails] Trying LOCAL server, movieId:", movieId);
+        const response = await fetch(`${API_URL}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data?.movie) {
+            console.log("[getMovieDetails] Found in LOCAL:", data.data.movie.title);
+            return data.data.movie as MovieDetails;
+          }
+        }
+      } catch (err) {
+        console.log("[getMovieDetails] Local fetch failed, trying YTS...");
       }
-      const data = await response.json();
-      if (!data.data?.movie) {
-        throw new Error(`Movie not found: ${movieId}`);
-      }
-      console.log("[getMovieDetails] Success:", data.data.movie.title);
-      return data.data.movie as MovieDetails;
+
+      // Fall back to YTS
+      console.log("[getMovieDetails] Fetching from YTS, movieId:", movieId);
+      const details = await invoke<MovieDetails>("get_movie_details", {
+        movieId,
+        withCast,
+        withImages
+      });
+      console.log("[getMovieDetails] Found in YTS:", details.title);
+
+      // Sync movie to local DB in background (don't wait)
+      syncMovieToLocal(details).catch(err =>
+        console.warn("[getMovieDetails] Failed to sync to local DB:", err)
+      );
+
+      return details;
     },
     forceRefresh
   );
@@ -122,9 +160,11 @@ export async function getFranchiseMovies(movieId: number): Promise<Movie[]> {
 
 /**
  * Start streaming a torrent and get the stream info
+ * @param torrentHash - The torrent info hash
+ * @param fileIndex - Optional file index for multi-file torrents (e.g., season packs)
  */
-export async function startStream(torrentHash: string): Promise<StreamInfo> {
-  return await invoke<StreamInfo>("start_stream", { torrentHash });
+export async function startStream(torrentHash: string, fileIndex?: number): Promise<StreamInfo> {
+  return await invoke<StreamInfo>("start_stream", { torrentHash, fileIndex: fileIndex ?? null });
 }
 
 /**
@@ -223,10 +263,13 @@ export async function searchMovies(
   page: number = 1,
   limit: number = 20
 ): Promise<MovieListData> {
-  return await listMovies({
-    query_term: query,
-    page,
-    limit,
+  // Search uses YTS API directly via Tauri command for fresh results
+  return await invoke<MovieListData>("list_movies", {
+    params: {
+      query_term: query,
+      page,
+      limit,
+    },
   });
 }
 
@@ -353,6 +396,20 @@ export interface SubtitleDownloadResult {
  */
 export async function downloadSubtitle(downloadUrl: string): Promise<SubtitleDownloadResult> {
   return await invoke<SubtitleDownloadResult>("download_subtitle", { downloadUrl });
+}
+
+/**
+ * Check if a stream URL is serving data (returns true if 200/206 on range request)
+ */
+export async function checkStreamReady(streamUrl: string): Promise<boolean> {
+  return await invoke<boolean>("check_stream_ready", { streamUrl });
+}
+
+/**
+ * Download a subtitle, serve it via the local HTTP server, return its URL
+ */
+export async function serveSubtitle(downloadUrl: string): Promise<string> {
+  return await invoke<string>("serve_subtitle", { downloadUrl });
 }
 
 /**
@@ -615,10 +672,17 @@ export async function getSeasonEpisodes(seriesId: number, season: number): Promi
 }
 
 /**
- * Search TV series
+ * Search TV series (no cache)
  */
 export async function searchSeries(query: string, page: number = 1, limit: number = 20): Promise<SeriesListData> {
-  return listSeries({ query_term: query, page, limit });
+  const queryParams = new URLSearchParams();
+  queryParams.set('query_term', query);
+  queryParams.set('page', String(page));
+  queryParams.set('limit', String(limit));
+
+  const response = await fetch(`${API_URL}/api/v2/list_series.json?${queryParams}`);
+  const data = await response.json();
+  return data.data as SeriesListData;
 }
 
 /**
@@ -971,10 +1035,17 @@ export async function getChannelsByCountry(country: string, limit: number = 50):
 }
 
 /**
- * Search channels by name
+ * Search channels by name (no cache)
  */
 export async function searchChannels(query: string, page: number = 1, limit: number = 50): Promise<ChannelListData> {
-  return listChannels({ query_term: query, page, limit });
+  const queryParams = new URLSearchParams();
+  queryParams.set('query_term', query);
+  queryParams.set('page', String(page));
+  queryParams.set('limit', String(limit));
+
+  const response = await fetch(`${API_URL}/api/v2/list_channels.json?${queryParams}`);
+  const data = await response.json();
+  return data.data as ChannelListData;
 }
 
 // ============ Unified Search API ============

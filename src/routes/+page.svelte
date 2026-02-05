@@ -2,15 +2,30 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
+  import { page } from "$app/stores";
   import MovieRow from "$lib/components/MovieRow.svelte";
+  import Top10Row from "$lib/components/Top10Row.svelte";
   import MovieGrid from "$lib/components/MovieGrid.svelte";
-  import { listMovies } from "$lib/api/commands";
+  import SeriesRow from "$lib/components/SeriesRow.svelte";
+  import SeriesGrid from "$lib/components/SeriesGrid.svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, type CuratedList, type HomeSection } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
   import { makeFocusable, addSection } from "$lib/utils/tvNavigation";
-  import type { Movie } from "$lib/api/types";
+  import type { Movie, MovieRating, Series, ListSeriesParams, Channel } from "$lib/api/types";
 
   // Category rows data
   let featured = $state<Movie | null>(null);
+  let featuredRating = $state<MovieRating | null>(null);
+  let featuredBackground = $state<string | null>(null);
+
+  // Hero background slideshow (multiple images for same movie)
+  let heroBackgrounds = $state<string[]>([]);
+  let currentBgIndex = $state(0);
+  let prevBgIndex = $state(-1);
+  let bgTransitioning = $state(false);
+  let heroInterval: ReturnType<typeof setInterval> | null = null;
+
   let trending = $state<Movie[]>([]);
   let topRated = $state<Movie[]>([]);
   let newReleases = $state<Movie[]>([]);
@@ -19,6 +34,7 @@
   let thriller = $state<Movie[]>([]);
   let scifi = $state<Movie[]>([]);
   let drama = $state<Movie[]>([]);
+  let homeSeries = $state<Series[]>([]);
 
   let loading = $state(true);
   let loadError = $state<string | null>(null);
@@ -74,7 +90,58 @@
   let selectedGroup = $state<string | null>(null);
   let channelsLoading = $state(false);
   let channelsError = $state<string | null>(null);
-  let channelGroupBy = $state<'country' | 'category'>('country');
+  let channelGroupBy = $state<'country' | 'category' | 'search'>('country');
+  let channelSearchQuery = $state('');
+  let channelSearchResults = $state<Channel[]>([]);
+  let channelSearchLoading = $state(false);
+
+  // Movie browse tabs
+  let movieBrowseMode = $state<'genre' | 'year' | 'curated' | 'search'>('curated');
+  let movieSearchQuery = $state('');
+  let movieSearchResults = $state<Movie[]>([]);
+  let movieSearchLoading = $state(false);
+  let selectedYear = $state<number | null>(null);
+  let yearMovies = $state<Movie[]>([]);
+  let yearLoading = $state(false);
+  let curatedList = $state<string>('');
+  let curatedMovies = $state<Movie[]>([]);
+  let curatedLoading = $state(false);
+  let curatedLists = $state<CuratedList[]>([]);
+  let curatedListsLoading = $state(false);
+
+  const years = Array.from({ length: 30 }, (_, i) => new Date().getFullYear() - i);
+
+  // TV Series state
+  let tvSeries = $state<Series[]>([]);
+  let tvSeriesTopRated = $state<Series[]>([]);
+  let tvSeriesOngoing = $state<Series[]>([]);
+  let tvSeriesLoading = $state(false);
+  let tvSeriesPage = $state(1);
+  let tvSeriesTotal = $state(0);
+  let tvSeriesLoadingMore = $state(false);
+  let tvBrowseMode = $state<'curated' | 'genre' | 'network' | 'search'>('curated');
+  let tvSearchQuery = $state('');
+  let tvSearchResults = $state<Series[]>([]);
+  let tvSearchLoading = $state(false);
+  let tvCuratedList = $state<string>('top');
+  let tvCuratedSeries = $state<Series[]>([]);
+  let tvCuratedLoading = $state(false);
+  let tvSelectedGenre = $state<string | null>(null);
+  let tvGenreSeries = $state<Series[]>([]);
+  let tvGenreLoading = $state(false);
+  let tvSelectedNetwork = $state<string | null>(null);
+  let tvNetworkSeries = $state<Series[]>([]);
+  let tvNetworkLoading = $state(false);
+
+  const tvCuratedLists = [
+    { id: 'top', name: 'Top Rated', filter: { sort_by: 'rating', order_by: 'desc', minimum_rating: 8.5 } },
+    { id: 'popular', name: 'Most Popular', filter: { sort_by: 'date_added', order_by: 'desc' } },
+    { id: 'ongoing', name: 'Ongoing', filter: { status: 'Continuing' } },
+    { id: 'classics', name: 'Classics', filter: { sort_by: 'rating', order_by: 'desc', maximum_year: 2010 } },
+  ];
+
+  const tvGenres = ['Drama', 'Comedy', 'Action', 'Adventure', 'Crime', 'Thriller', 'Sci-Fi', 'Fantasy', 'Horror', 'Mystery', 'Animation', 'Documentary', 'Romance', 'Biography', 'History', 'War'];
+  const tvNetworks = ['HBO', 'Netflix', 'AMC', 'BBC', 'NBC', 'CBS', 'ABC', 'FOX', 'Disney+', 'Showtime', 'Comedy Central', 'Adult Swim', 'The CW', 'PBS', 'Nickelodeon'];
 
   // Pagination for category views
   let trendingPage = $state(1);
@@ -128,48 +195,128 @@
     // Cleanup on unmount
     return () => {
       if (retryTimer) clearTimeout(retryTimer);
+      stopHeroAutoplay();
     };
   });
+
+  // Dynamic home sections from API
+  let homeSections = $state<HomeSection[]>([]);
 
   async function loadHomeContent() {
     loading = true;
     loadError = null;
 
     try {
-      const [
-        trendingData,
-        topRatedData,
-        newReleasesData,
-        actionData,
-        comedyData,
-        thrillerData,
-        scifiData,
-        dramaData,
-      ] = await Promise.all([
-        listMovies({ sort_by: "download_count", limit: 20 }),
-        listMovies({ sort_by: "rating", limit: 20, minimum_rating: 8 }),
-        listMovies({ sort_by: "date_added", limit: 20 }),
-        listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
-        listMovies({ genre: "Comedy", sort_by: "rating", limit: 20 }),
-        listMovies({ genre: "Thriller", sort_by: "rating", limit: 20 }),
-        listMovies({ genre: "Sci-Fi", sort_by: "rating", limit: 20 }),
-        listMovies({ genre: "Drama", sort_by: "rating", limit: 20 }),
-      ]);
+      // First, try to load dynamic home data from server
+      const homeData = await getHomeData();
+      homeSections = homeData.sections || [];
+      console.log('[Home] Loaded sections from API:', homeSections.length);
 
-      trending = trendingData.movies || [];
-      trendingTotal = trendingData.movie_count || 0;
-      topRated = topRatedData.movies || [];
-      newReleases = newReleasesData.movies || [];
-      newReleasesTotal = newReleasesData.movie_count || 0;
-      action = actionData.movies || [];
-      comedy = comedyData.movies || [];
-      thriller = thrillerData.movies || [];
-      scifi = scifiData.movies || [];
-      drama = dramaData.movies || [];
+      // Get featured movie from hero_slider or hero section
+      if (homeData.hero_slider?.[0]) {
+        featured = homeData.hero_slider[0];
+      } else {
+        // Try sections with hero/banner display type
+        const heroSection = homeSections.find(s => s.display_type === 'hero' || s.display_type === 'banner');
+        if (heroSection?.movies?.[0]) {
+          featured = heroSection.movies[0];
+        } else {
+          // Fallback to top rated
+          const topData = await listMovies({ sort_by: "rating", limit: 1, minimum_rating: 8 });
+          if (topData.movies?.[0]) {
+            featured = topData.movies[0];
+          }
+        }
+      }
 
-      // Pick a random featured movie from top rated
-      if (topRated.length > 0) {
-        featured = topRated[Math.floor(Math.random() * Math.min(5, topRated.length))];
+      if (featured) {
+        console.log('[Home] Featured movie:', featured.title);
+
+        // Fetch multiple IMDB images for Ken Burns slideshow
+        if (featured.imdb_code) {
+          const images = await getImdbImages(featured.imdb_code);
+          // Get horizontal images (good for backgrounds)
+          const bgImages = images
+            .filter(img => img.width > img.height) // horizontal only
+            .filter(img => img.type === 'still_frame' || img.type === 'publicity' || img.type === 'production')
+            .map(img => img.url)
+            .slice(0, 5);
+
+          if (bgImages.length > 0) {
+            heroBackgrounds = bgImages;
+            featuredBackground = bgImages[0];
+            currentBgIndex = 0;
+            console.log('[Home] Loaded', bgImages.length, 'background images');
+            // Start background rotation
+            startHeroAutoplay();
+          } else {
+            // Fallback to movie's default background
+            featuredBackground = featured.background_image_original || featured.large_cover_image || null;
+          }
+
+          // Get rating
+          const rating = await getMovieRating(featured.imdb_code);
+          if (rating) featuredRating = rating;
+        }
+      }
+
+      // Map API sections to local arrays for display
+      for (const section of homeSections) {
+        if (!section.movies || section.display_type === 'hero' || section.display_type === 'banner') continue;
+
+        // Map by section type or id
+        switch (section.type || section.id) {
+          case 'recent':
+          case 'recently_added':
+            newReleases = section.movies;
+            newReleasesTotal = section.movies.length;
+            break;
+          case 'top_rated':
+            topRated = section.movies;
+            break;
+        }
+
+        // Map by section id for custom sections
+        if (section.id === 'trending' || section.id.includes('trending')) {
+          trending = section.movies;
+          trendingTotal = section.movies.length;
+        }
+      }
+
+      // Fallback: If no API sections or missing data, load traditional way
+      if (homeSections.length === 0 || !featured) {
+        console.log('[Home] Using fallback data loading');
+        await loadFallbackContent();
+      }
+
+      // Always load these additional sections (API might not have them)
+      if (action.length === 0 || comedy.length === 0) {
+        const [actionData, comedyData, thrillerData, scifiData, dramaData] = await Promise.all([
+          listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
+          listMovies({ genre: "Comedy", sort_by: "rating", limit: 20 }),
+          listMovies({ genre: "Thriller", sort_by: "rating", limit: 20 }),
+          listMovies({ genre: "Sci-Fi", sort_by: "rating", limit: 20 }),
+          listMovies({ genre: "Drama", sort_by: "rating", limit: 20 }),
+        ]);
+        action = actionData.movies || [];
+        comedy = comedyData.movies || [];
+        thriller = thrillerData.movies || [];
+        scifi = scifiData.movies || [];
+        drama = dramaData.movies || [];
+      }
+
+      // Load TV series for home row (non-blocking)
+      listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc' })
+        .then(data => { homeSeries = data.series || []; })
+        .catch(err => console.warn('[Home] Failed to load series:', err));
+
+      // Fetch OMDB rating for featured movie
+      if (featured?.imdb_code) {
+        try {
+          featuredRating = await getMovieRating(featured.imdb_code);
+        } catch (err) {
+          console.warn('[Home] Failed to fetch featured movie rating:', err);
+        }
       }
 
       // Reset retry count on success
@@ -191,6 +338,77 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function loadFallbackContent() {
+    const [trendingData, topRatedData, newReleasesData] = await Promise.all([
+      listMovies({ sort_by: "download_count", limit: 20 }),
+      listMovies({ sort_by: "rating", limit: 20, minimum_rating: 8 }),
+      listMovies({ sort_by: "date_added", limit: 20 }),
+    ]);
+
+    trending = trendingData.movies || [];
+    trendingTotal = trendingData.movie_count || 0;
+    topRated = topRatedData.movies || [];
+    newReleases = newReleasesData.movies || [];
+    newReleasesTotal = newReleasesData.movie_count || 0;
+
+    // Enrich with local ratings
+    const allMovies = [...trending, ...topRated, ...newReleases];
+    const imdbCodes = [...new Set(allMovies.map(m => m.imdb_code).filter(Boolean))];
+    if (imdbCodes.length > 0) {
+      const localRatings = await getLocalRatings(imdbCodes);
+      const enrichMovie = (m: Movie) => {
+        const rating = localRatings[m.imdb_code];
+        if (rating?.imdb_rating) m.rating = rating.imdb_rating;
+        return m;
+      };
+      trending = trending.map(enrichMovie);
+      topRated = topRated.map(enrichMovie);
+      newReleases = newReleases.map(enrichMovie);
+    }
+
+    // Feature a top rated movie if no hero from API
+    if (!featured && topRated.length > 0) {
+      featured = topRated[0];
+    }
+  }
+
+  // Hero background rotation (Ken Burns effect)
+  function startHeroAutoplay() {
+    stopHeroAutoplay();
+    if (heroBackgrounds.length <= 1) {
+      console.log('[Hero] Only 1 background, no rotation needed');
+      return;
+    }
+
+    console.log('[Hero] Starting Ken Burns rotation with', heroBackgrounds.length, 'images');
+    heroInterval = setInterval(() => {
+      nextBackground();
+    }, 5000); // 5 seconds per image
+  }
+
+  function stopHeroAutoplay() {
+    if (heroInterval) {
+      clearInterval(heroInterval);
+      heroInterval = null;
+    }
+  }
+
+  function nextBackground() {
+    if (heroBackgrounds.length <= 1) return;
+
+    // Start transition
+    bgTransitioning = true;
+    prevBgIndex = currentBgIndex;
+
+    // After fade out, switch to next image
+    setTimeout(() => {
+      currentBgIndex = (currentBgIndex + 1) % heroBackgrounds.length;
+      featuredBackground = heroBackgrounds[currentBgIndex];
+      bgTransitioning = false;
+      console.log('[Hero] Background', currentBgIndex + 1, '/', heroBackgrounds.length);
+    }, 1000); // 1 second crossfade
   }
 
   function manualRetry() {
@@ -294,16 +512,219 @@
     }
   }
 
-  function switchGroupBy(mode: 'country' | 'category') {
+  function switchGroupBy(mode: 'country' | 'category' | 'search') {
     channelGroupBy = mode;
     selectedGroup = null;
-    updateChannelGroups();
+    if (mode !== 'search') {
+      updateChannelGroups();
+    } else {
+      channelSearchQuery = '';
+      channelSearchResults = [];
+    }
+  }
+
+  async function handleChannelSearch() {
+    if (!channelSearchQuery.trim()) return;
+    channelSearchLoading = true;
+    try {
+      const data = await searchChannels(channelSearchQuery, 1, 50);
+      channelSearchResults = data.channels || [];
+    } catch (err) {
+      console.error('[Search] Channel search failed:', err);
+      channelSearchResults = [];
+    } finally {
+      channelSearchLoading = false;
+    }
+  }
+
+  async function handleYearSelect(year: number) {
+    selectedYear = year;
+    yearLoading = true;
+    try {
+      const data = await listMovies({ year, sort_by: 'rating', limit: 50 });
+      yearMovies = data.movies || [];
+    } catch (err) {
+      console.error('Failed to load year movies:', err);
+    } finally {
+      yearLoading = false;
+    }
+  }
+
+  async function handleCuratedSelect(slug: string) {
+    curatedList = slug;
+    curatedLoading = true;
+    try {
+      const list = await getCuratedList(slug);
+      curatedMovies = list?.movies || [];
+    } catch (err) {
+      console.error('Failed to load curated list:', err);
+    } finally {
+      curatedLoading = false;
+    }
+  }
+
+  async function loadCuratedLists() {
+    if (curatedLists.length > 0) return;
+    curatedListsLoading = true;
+    try {
+      curatedLists = await getCuratedLists();
+      // Auto-select first list if available
+      if (curatedLists.length > 0 && !curatedList) {
+        handleCuratedSelect(curatedLists[0].slug);
+      }
+    } catch (err) {
+      console.error('Failed to load curated lists:', err);
+    } finally {
+      curatedListsLoading = false;
+    }
+  }
+
+  function switchMovieBrowseMode(mode: 'genre' | 'year' | 'curated' | 'search') {
+    movieBrowseMode = mode;
+    selectedYear = null;
+    selectedGenre = null;
+    if (mode === 'curated') {
+      loadCuratedLists();
+    }
+    if (mode === 'search') {
+      movieSearchQuery = '';
+      movieSearchResults = [];
+    }
+  }
+
+  async function handleMovieSearch() {
+    if (!movieSearchQuery.trim()) return;
+    movieSearchLoading = true;
+    try {
+      const data = await searchMovies(movieSearchQuery, 1, 50);
+      movieSearchResults = data.movies || [];
+    } catch (err) {
+      console.error('[Search] Movie search failed:', err);
+      movieSearchResults = [];
+    } finally {
+      movieSearchLoading = false;
+    }
   }
 
   function playChannel(channel: IPTVChannel) {
     if (channel.url) {
       goto(`/player/live?url=${encodeURIComponent(channel.url)}&title=${encodeURIComponent(channel.name)}`);
     }
+  }
+
+  async function loadTVSeries() {
+    if (tvSeries.length > 0) return; // Already loaded
+
+    tvSeriesLoading = true;
+    try {
+      const [allData, topData, ongoingData] = await Promise.all([
+        listSeries({ limit: 50, sort_by: 'date_added', order_by: 'desc' }),
+        listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc', minimum_rating: 8 }),
+        listSeries({ limit: 20, status: 'Continuing', sort_by: 'rating', order_by: 'desc' }),
+      ]);
+
+      tvSeries = allData.series || [];
+      tvSeriesTotal = allData.series_count || 0;
+      tvSeriesTopRated = topData.series || [];
+      tvSeriesOngoing = ongoingData.series || [];
+    } catch (err) {
+      console.error('[TV] Failed to load series:', err);
+      tvSeries = [];
+    } finally {
+      tvSeriesLoading = false;
+    }
+  }
+
+  async function loadMoreTVSeries() {
+    if (tvSeriesLoadingMore) return;
+    tvSeriesLoadingMore = true;
+    tvSeriesPage += 1;
+
+    try {
+      const data = await listSeries({ limit: 50, page: tvSeriesPage, sort_by: 'date_added', order_by: 'desc' });
+      tvSeries = [...tvSeries, ...(data.series || [])];
+    } catch {
+      tvSeriesPage -= 1;
+    } finally {
+      tvSeriesLoadingMore = false;
+    }
+  }
+
+  function switchTVBrowseMode(mode: 'curated' | 'genre' | 'network' | 'search') {
+    tvBrowseMode = mode;
+    if (mode === 'search') {
+      tvSearchQuery = '';
+      tvSearchResults = [];
+    }
+  }
+
+  async function handleTVSearch() {
+    if (!tvSearchQuery.trim()) return;
+    tvSearchLoading = true;
+    try {
+      const data = await searchSeries(tvSearchQuery, 1, 50);
+      tvSearchResults = data.series || [];
+    } catch (err) {
+      console.error('[Search] TV search failed:', err);
+      tvSearchResults = [];
+    } finally {
+      tvSearchLoading = false;
+    }
+  }
+
+  async function handleTVCuratedSelect(listId: string) {
+    tvCuratedList = listId;
+    tvCuratedLoading = true;
+    tvCuratedSeries = [];
+
+    const list = tvCuratedLists.find(l => l.id === listId);
+    if (!list) {
+      tvCuratedLoading = false;
+      return;
+    }
+
+    try {
+      const data = await listSeries({ limit: 50, ...list.filter });
+      tvCuratedSeries = data.series || [];
+    } catch (err) {
+      console.error('Failed to load curated series:', err);
+    } finally {
+      tvCuratedLoading = false;
+    }
+  }
+
+  async function handleTVGenreSelect(genre: string) {
+    tvSelectedGenre = genre;
+    tvGenreLoading = true;
+    tvGenreSeries = [];
+
+    try {
+      const data = await listSeries({ limit: 50, genre: genre });
+      tvGenreSeries = data.series || [];
+    } catch (err) {
+      console.error('Failed to load genre series:', err);
+    } finally {
+      tvGenreLoading = false;
+    }
+  }
+
+  async function handleTVNetworkSelect(network: string) {
+    tvSelectedNetwork = network;
+    tvNetworkLoading = true;
+    tvNetworkSeries = [];
+
+    try {
+      const data = await listSeries({ limit: 50, network: network });
+      tvNetworkSeries = data.series || [];
+    } catch (err) {
+      console.error('Failed to load network series:', err);
+    } finally {
+      tvNetworkLoading = false;
+    }
+  }
+
+  function handleSeriesClick(series: Series) {
+    goto(`/series/${series.id}`);
   }
 
   async function handleNavClick(nav: string) {
@@ -323,6 +744,14 @@
 
     if (nav === "live") {
       await loadChannels();
+    }
+
+    if (nav === "movies") {
+      await loadCuratedLists();
+    }
+
+    if (nav === "tv") {
+      await loadTVSeries();
     }
 
     // Auto-focus search input when entering search
@@ -468,6 +897,7 @@
 
   function handlePlay() {
     if (featured) {
+      console.log('[Hero Play] Featured ID:', featured.id, 'Title:', featured.title);
       goto(`/movie/${featured.id}`);
     }
   }
@@ -500,90 +930,7 @@
 
 <div class="app">
   <!-- Left Sidebar -->
-  <nav class="sidebar">
-    <div class="sidebar-top">
-      <!-- Omnius Logo -->
-      <div class="logo-container">
-        <svg viewBox="0 0 7 7" fill="none" class="omnius-logo">
-          <path d="M3.336 6.69596C2.696 6.69596 2.124 6.55196 1.62 6.26396C1.116 5.97596 0.72 5.57996 0.432 5.07596C0.144 4.57196 0 3.99996 0 3.35996C0 2.71196 0.144 2.13596 0.432 1.63196C0.72 1.12796 1.116 0.731963 1.62 0.443963C2.124 0.155963 2.696 0.0119629 3.336 0.0119629C3.976 0.0119629 4.544 0.155963 5.04 0.443963C5.544 0.731963 5.94 1.12796 6.228 1.63196C6.516 2.13596 6.664 2.71196 6.672 3.35996C6.672 3.99996 6.524 4.57196 6.228 5.07596C5.94 5.57996 5.544 5.97596 5.04 6.26396C4.544 6.55196 3.976 6.69596 3.336 6.69596ZM3.336 5.85596C3.8 5.85596 4.216 5.74796 4.584 5.53196C4.952 5.31596 5.24 5.01996 5.448 4.64396C5.656 4.26796 5.76 3.83996 5.76 3.35996C5.76 2.87996 5.656 2.45196 5.448 2.07596C5.24 1.69196 4.952 1.39196 4.584 1.17596C4.216 0.959963 3.8 0.851963 3.336 0.851963C2.872 0.851963 2.456 0.959963 2.088 1.17596C1.72 1.39196 1.428 1.69196 1.212 2.07596C1.004 2.45196 0.9 2.87996 0.9 3.35996C0.9 3.83996 1.004 4.26796 1.212 4.64396C1.428 5.01996 1.72 5.31596 2.088 5.53196C2.456 5.74796 2.872 5.85596 3.336 5.85596Z" fill="#FF2D55"/>
-        </svg>
-      </div>
-      <button
-        class="nav-item"
-        class:active={activeNav === "search"}
-        onclick={() => handleNavClick("search")}
-        aria-label="Search"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-        </svg>
-      </button>
-      <button
-        class="nav-item"
-        class:active={activeNav === "home"}
-        onclick={() => handleNavClick("home")}
-        aria-label="Home"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
-        </svg>
-      </button>
-      <button
-        class="nav-item"
-        class:active={activeNav === "movies"}
-        onclick={() => handleNavClick("movies")}
-        aria-label="Movies"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
-        </svg>
-      </button>
-      <button
-        class="nav-item"
-        class:active={activeNav === "tv"}
-        onclick={() => handleNavClick("tv")}
-        aria-label="TV Series"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
-        </svg>
-      </button>
-      <button
-        class="nav-item"
-        class:active={activeNav === "live"}
-        onclick={() => handleNavClick("live")}
-        aria-label="Live Channels"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-        </svg>
-      </button>
-    </div>
-    <div class="sidebar-bottom">
-      <button
-        class="nav-item"
-        class:active={activeNav === "favorites"}
-        onclick={() => handleNavClick("favorites")}
-        aria-label="My List"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-        </svg>
-        {#if favoritesStore.count > 0}
-          <span class="nav-badge">{favoritesStore.count}</span>
-        {/if}
-      </button>
-      <button
-        class="nav-item"
-        onclick={() => goto('/settings')}
-        aria-label="Settings"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
-        </svg>
-      </button>
-    </div>
-  </nav>
+  <Sidebar {activeNav} onNavClick={handleNavClick} />
 
   <!-- Main Content -->
   <main class="main-content">
@@ -713,8 +1060,162 @@
     {:else if activeNav === "tv"}
       <!-- TV Series View -->
       <div class="category-view">
-        <h1 class="category-title">TV Series</h1>
-        <p class="coming-soon">Coming soon - TV Series sync from EZTV</p>
+        <div class="tv-header">
+          <h1 class="category-title">Browse TV Series</h1>
+          <div class="group-toggle">
+            <button
+              class="toggle-btn tv-toggle"
+              class:active={tvBrowseMode === 'curated'}
+              onclick={() => switchTVBrowseMode('curated')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+              </svg>
+              Curated
+            </button>
+            <button
+              class="toggle-btn tv-toggle"
+              class:active={tvBrowseMode === 'genre'}
+              onclick={() => switchTVBrowseMode('genre')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
+              </svg>
+              Genre
+            </button>
+            <button
+              class="toggle-btn tv-toggle"
+              class:active={tvBrowseMode === 'network'}
+              onclick={() => switchTVBrowseMode('network')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+              </svg>
+              Network
+            </button>
+            <button
+              class="toggle-btn tv-toggle"
+              class:active={tvBrowseMode === 'search'}
+              onclick={() => switchTVBrowseMode('search')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+              </svg>
+              Search
+            </button>
+          </div>
+        </div>
+
+        {#if tvBrowseMode === 'curated'}
+          <!-- Curated Lists -->
+          <div class="curated-tabs tv-curated">
+            {#each tvCuratedLists as list (list.id)}
+              <button
+                class="curated-tab tv-tab"
+                class:active={tvCuratedList === list.id}
+                onclick={() => handleTVCuratedSelect(list.id)}
+              >
+                {list.name}
+              </button>
+            {/each}
+          </div>
+          {#if tvCuratedLoading}
+            <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
+          {:else if tvCuratedSeries.length > 0}
+            <SeriesGrid series={tvCuratedSeries} loading={false} error={null} />
+          {:else if tvSeriesLoading}
+            <div class="loading-inline">
+              <div class="spinner tv-spinner"></div>
+              <p>Loading series...</p>
+            </div>
+          {:else}
+            <SeriesGrid
+              series={tvCuratedList === 'top' ? tvSeriesTopRated : tvCuratedList === 'ongoing' ? tvSeriesOngoing : tvSeries}
+              loading={false}
+              error={null}
+              hasMore={tvCuratedList !== 'top' && tvCuratedList !== 'ongoing' && tvSeries.length < tvSeriesTotal}
+              loadingMore={tvSeriesLoadingMore}
+              onLoadMore={tvCuratedList !== 'top' && tvCuratedList !== 'ongoing' ? loadMoreTVSeries : undefined}
+            />
+          {/if}
+        {:else if tvBrowseMode === 'genre'}
+          <!-- Genre Grid -->
+          {#if tvSelectedGenre}
+            <div class="genre-header">
+              <button class="back-btn" onclick={() => { tvSelectedGenre = null; tvGenreSeries = []; }} aria-label="Go back">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+              </button>
+              <h2>{tvSelectedGenre} Series</h2>
+            </div>
+            {#if tvGenreLoading}
+              <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
+            {:else}
+              <SeriesGrid series={tvGenreSeries} loading={false} error={null} />
+            {/if}
+          {:else}
+            <div class="genre-grid tv-genre-grid">
+              {#each tvGenres as genre (genre)}
+                <button class="genre-card tv-genre-card" onclick={() => handleTVGenreSelect(genre)}>
+                  {genre}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {:else if tvBrowseMode === 'network'}
+          <!-- Network Selection -->
+          {#if tvSelectedNetwork}
+            <div class="genre-header">
+              <button class="back-btn" onclick={() => { tvSelectedNetwork = null; tvNetworkSeries = []; }} aria-label="Go back">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+              </button>
+              <h2>{tvSelectedNetwork} Series</h2>
+            </div>
+            {#if tvNetworkLoading}
+              <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
+            {:else}
+              <SeriesGrid series={tvNetworkSeries} loading={false} error={null} />
+            {/if}
+          {:else}
+            <div class="network-grid">
+              {#each tvNetworks as network (network)}
+                <button class="network-card" onclick={() => handleTVNetworkSelect(network)}>
+                  {network}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {:else if tvBrowseMode === 'search'}
+          <!-- TV Series Search -->
+          <div class="search-section">
+            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleTVSearch(); }}>
+              <input
+                type="text"
+                class="inline-search-input"
+                placeholder="Search TV series..."
+                bind:value={tvSearchQuery}
+              />
+              <button type="submit" class="inline-search-btn" disabled={tvSearchLoading}>
+                {#if tvSearchLoading}
+                  <div class="spinner small tv-spinner"></div>
+                {:else}
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                  </svg>
+                {/if}
+              </button>
+            </form>
+            {#if tvSearchResults.length > 0}
+              <p class="search-results-count">{tvSearchResults.length} results for "{tvSearchQuery}"</p>
+              <SeriesGrid series={tvSearchResults} loading={false} error={null} />
+            {:else if tvSearchQuery && !tvSearchLoading}
+              <p class="no-results">No TV series found for "{tvSearchQuery}"</p>
+            {/if}
+          </div>
+        {/if}
       </div>
     {:else if activeNav === "live"}
       <!-- Live Channels View -->
@@ -743,6 +1244,16 @@
                 </svg>
                 Categories
               </button>
+              <button
+                class="toggle-btn"
+                class:active={channelGroupBy === 'search'}
+                onclick={() => switchGroupBy('search')}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+                Search
+              </button>
             </div>
           {/if}
         </div>
@@ -755,6 +1266,51 @@
           <div class="error-inline">
             <p>{channelsError}</p>
             <button class="btn-retry" onclick={loadChannels}>Retry</button>
+          </div>
+        {:else if channelGroupBy === 'search'}
+          <!-- Channel Search -->
+          <div class="search-section">
+            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleChannelSearch(); }}>
+              <input
+                type="text"
+                class="inline-search-input"
+                placeholder="Search channels..."
+                bind:value={channelSearchQuery}
+              />
+              <button type="submit" class="inline-search-btn" disabled={channelSearchLoading}>
+                {#if channelSearchLoading}
+                  <div class="spinner small"></div>
+                {:else}
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                  </svg>
+                {/if}
+              </button>
+            </form>
+            {#if channelSearchResults.length > 0}
+              <p class="search-results-count">{channelSearchResults.length} results for "{channelSearchQuery}"</p>
+              <div class="channels-list">
+                {#each channelSearchResults as channel (channel.id)}
+                  <button class="channel-list-item" onclick={() => goto(`/player/live?url=${encodeURIComponent(channel.stream_url || '')}&title=${encodeURIComponent(channel.name)}`)}>
+                    {#if channel.logo}
+                      <img src={channel.logo} alt="" class="channel-list-logo" />
+                    {:else}
+                      <div class="channel-list-logo-placeholder">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                        </svg>
+                      </div>
+                    {/if}
+                    <span class="channel-list-name">{channel.name}</span>
+                    <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  </button>
+                {/each}
+              </div>
+            {:else if channelSearchQuery && !channelSearchLoading}
+              <p class="no-results">No channels found for "{channelSearchQuery}"</p>
+            {/if}
           </div>
         {:else if selectedGroup}
           <div class="genre-header">
@@ -811,16 +1367,159 @@
         />
       </div>
     {:else if activeNav === "movies"}
-      <!-- Movies/Genres View -->
-      <div class="search-view">
-        <h1 class="category-title">Browse by Genre</h1>
-        <div class="genre-grid">
-          {#each genres as genre (genre)}
-            <button class="genre-card" onclick={() => handleGenreSelect(genre)}>
-              {genre}
+      <!-- Movies Browse View -->
+      <div class="category-view">
+        <div class="movies-header">
+          <h1 class="category-title">Browse Movies</h1>
+          <div class="group-toggle">
+            <button
+              class="toggle-btn"
+              class:active={movieBrowseMode === 'curated'}
+              onclick={() => switchMovieBrowseMode('curated')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+              </svg>
+              Curated
             </button>
-          {/each}
+            <button
+              class="toggle-btn"
+              class:active={movieBrowseMode === 'genre'}
+              onclick={() => switchMovieBrowseMode('genre')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
+              </svg>
+              Genre
+            </button>
+            <button
+              class="toggle-btn"
+              class:active={movieBrowseMode === 'year'}
+              onclick={() => switchMovieBrowseMode('year')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM9 10H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm-8 4H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2z"/>
+              </svg>
+              Year
+            </button>
+            <button
+              class="toggle-btn"
+              class:active={movieBrowseMode === 'search'}
+              onclick={() => switchMovieBrowseMode('search')}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+              </svg>
+              Search
+            </button>
+          </div>
         </div>
+
+        {#if movieBrowseMode === 'curated'}
+          <!-- Curated Lists -->
+          {#if curatedListsLoading}
+            <div class="loading-spinner"><div class="spinner"></div></div>
+          {:else if curatedLists.length === 0}
+            <p style="color: #888; text-align: center;">No curated lists available</p>
+          {:else}
+            <div class="curated-tabs">
+              {#each curatedLists as list (list.slug)}
+                <button
+                  class="curated-tab"
+                  class:active={curatedList === list.slug}
+                  onclick={() => handleCuratedSelect(list.slug)}
+                >
+                  {list.name}
+                </button>
+              {/each}
+            </div>
+            {#if curatedLoading}
+              <div class="loading-spinner"><div class="spinner"></div></div>
+            {:else}
+              <MovieGrid movies={curatedMovies} loading={false} error={null} />
+            {/if}
+          {/if}
+        {:else if movieBrowseMode === 'genre'}
+          <!-- Genre Grid -->
+          {#if selectedGenre}
+            <div class="genre-header">
+              <button class="back-btn" onclick={() => { selectedGenre = null; }} aria-label="Go back">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+              </button>
+              <h2>{selectedGenre} Movies</h2>
+            </div>
+            <MovieGrid
+              movies={genreMovies}
+              loading={genreLoading}
+              error={null}
+              hasMore={genreMovies.length < genreTotal}
+              loadingMore={genreLoadingMore}
+              onLoadMore={loadMoreGenre}
+            />
+          {:else}
+            <div class="genre-grid">
+              {#each genres as genre (genre)}
+                <button class="genre-card" onclick={() => handleGenreSelect(genre)}>
+                  {genre}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {:else if movieBrowseMode === 'year'}
+          <!-- Year Selection -->
+          {#if selectedYear}
+            <div class="genre-header">
+              <button class="back-btn" onclick={() => { selectedYear = null; yearMovies = []; }} aria-label="Go back">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+              </button>
+              <h2>{selectedYear} Movies</h2>
+            </div>
+            {#if yearLoading}
+              <div class="loading-spinner"><div class="spinner"></div></div>
+            {:else}
+              <MovieGrid movies={yearMovies} loading={false} error={null} />
+            {/if}
+          {:else}
+            <div class="year-grid">
+              {#each years as year (year)}
+                <button class="year-card" onclick={() => handleYearSelect(year)}>
+                  {year}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {:else if movieBrowseMode === 'search'}
+          <!-- Movie Search -->
+          <div class="search-section">
+            <form class="inline-search-form" onsubmit={(e) => { e.preventDefault(); handleMovieSearch(); }}>
+              <input
+                type="text"
+                class="inline-search-input"
+                placeholder="Search movies..."
+                bind:value={movieSearchQuery}
+              />
+              <button type="submit" class="inline-search-btn" disabled={movieSearchLoading}>
+                {#if movieSearchLoading}
+                  <div class="spinner small"></div>
+                {:else}
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                  </svg>
+                {/if}
+              </button>
+            </form>
+            {#if movieSearchResults.length > 0}
+              <p class="search-results-count">{movieSearchResults.length} results for "{movieSearchQuery}"</p>
+              <MovieGrid movies={movieSearchResults} loading={false} error={null} />
+            {:else if movieSearchQuery && !movieSearchLoading}
+              <p class="no-results">No movies found for "{movieSearchQuery}"</p>
+            {/if}
+          </div>
+        {/if}
       </div>
     {:else if activeNav === "favorites"}
       <!-- Favorites View -->
@@ -848,8 +1547,26 @@
       {#if featured}
         <div
           class="hero"
-          style="background-image: url({featured.background_image_original || featured.large_cover_image})"
+          onmouseenter={stopHeroAutoplay}
+          onmouseleave={startHeroAutoplay}
         >
+          <!-- Dual-layer background for crossfade -->
+          {#if heroBackgrounds.length > 1}
+            <div
+              class="hero-bg hero-bg-back"
+              style="background-image: url({heroBackgrounds[prevBgIndex >= 0 ? prevBgIndex : 0]})"
+            ></div>
+            <div
+              class="hero-bg hero-bg-front"
+              class:visible={!bgTransitioning}
+              style="background-image: url({heroBackgrounds[currentBgIndex]})"
+            ></div>
+          {:else}
+            <div
+              class="hero-bg"
+              style="background-image: url({featuredBackground || featured.background_image_original || featured.large_cover_image})"
+            ></div>
+          {/if}
           <div class="hero-gradient"></div>
           <div class="hero-content">
             <div class="hero-badge">
@@ -861,12 +1578,21 @@
             <h1 class="hero-title">{featured.title}</h1>
             <div class="hero-meta">
               <span class="hero-year">{featured.year}</span>
-              <span class="hero-rating">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                </svg>
-                {getRatingDisplay(featured.rating)} IMDb
-              </span>
+              {#if featuredRating?.imdb_rating}
+                <span class="hero-rating">
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  </svg>
+                  {featuredRating.imdb_rating.toFixed(1)} IMDb
+                </span>
+              {:else if featured.rating && featured.rating > 0}
+                <span class="hero-rating">
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  </svg>
+                  {featured.rating.toFixed(1)} IMDb
+                </span>
+              {/if}
               {#if featured.genres && featured.genres.length > 0}
                 <span class="hero-genres">{featured.genres.slice(0, 2).join(" / ")}</span>
               {/if}
@@ -889,19 +1615,49 @@
               </button>
             </div>
           </div>
+
         </div>
       {/if}
 
       <!-- Movie Rows -->
       <div class="content">
-        <MovieRow title="Trending Now" movies={trending} />
-        <MovieRow title="Top Rated" movies={topRated} />
-        <MovieRow title="New Releases" movies={newReleases} />
-        <MovieRow title="Action" movies={action} />
-        <MovieRow title="Thriller" movies={thriller} />
-        <MovieRow title="Sci-Fi" movies={scifi} />
-        <MovieRow title="Comedy" movies={comedy} />
-        <MovieRow title="Drama" movies={drama} />
+        <!-- Dynamic sections from API (excludes hero/banner) -->
+        {#each homeSections.filter(s => s.display_type !== 'hero' && s.display_type !== 'banner' && s.movies && s.movies.length > 0) as section}
+          {#if section.display_type === 'top10'}
+            <Top10Row title={section.title} movies={section.movies || []} sectionId={section.id} />
+          {:else}
+            <MovieRow title={section.title} movies={section.movies || []} />
+          {/if}
+        {/each}
+
+        <!-- Fallback sections if no API sections loaded -->
+        {#if homeSections.filter(s => s.display_type !== 'hero').length === 0}
+          <MovieRow title="Trending Now" movies={trending} />
+          <MovieRow title="Top Rated" movies={topRated} />
+          <MovieRow title="New Releases" movies={newReleases} />
+        {/if}
+
+        <!-- TV Series row -->
+        {#if homeSeries.length > 0}
+          <SeriesRow title="Popular TV Series" series={homeSeries} />
+        {/if}
+
+        <!-- Genre sections (always shown) -->
+        {#if action.length > 0}
+          <MovieRow title="Action" movies={action} />
+        {/if}
+        {#if thriller.length > 0}
+          <MovieRow title="Thriller" movies={thriller} />
+        {/if}
+        {#if scifi.length > 0}
+          <MovieRow title="Sci-Fi" movies={scifi} />
+        {/if}
+        {#if comedy.length > 0}
+          <MovieRow title="Comedy" movies={comedy} />
+        {/if}
+        {#if drama.length > 0}
+          <MovieRow title="Drama" movies={drama} />
+        {/if}
       </div>
     {/if}
   </main>
@@ -921,7 +1677,7 @@
     outline: none;
   }
 
-  :global(*:focus-visible) {
+  :global(*:focus-visible:not(.movie-card)) {
     outline: 3px solid #e50914 !important;
     outline-offset: 2px;
   }
@@ -933,128 +1689,6 @@
     background: #141414;
     color: #fff;
     overflow: hidden;
-  }
-
-  /* Sidebar - truly fixed, never scrolls */
-  .sidebar {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 70px;
-    height: 100vh;
-    height: 100dvh;
-    background: rgba(0, 0, 0, 0.95);
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 20px 0;
-    z-index: 1000;
-    overflow: hidden;
-    box-sizing: border-box;
-  }
-
-  .sidebar-top,
-  .sidebar-bottom {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .nav-item {
-    width: 50px;
-    height: 50px;
-    background: none;
-    border: none;
-    border-radius: 8px;
-    color: #808080;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    position: relative;
-  }
-
-  .nav-item::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 4px;
-    height: 0;
-    background: #e50914;
-    border-radius: 0 2px 2px 0;
-    transition: height 0.2s ease;
-  }
-
-  .nav-item:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .nav-item:focus {
-    outline: none;
-    color: #fff;
-    background: rgba(229, 9, 20, 0.3);
-    box-shadow: inset 0 0 0 3px #e50914;
-  }
-
-  .nav-item:focus-visible {
-    outline: none;
-    color: #fff;
-    background: rgba(229, 9, 20, 0.3);
-    box-shadow: inset 0 0 0 3px #e50914;
-  }
-
-  .nav-item.active {
-    color: #fff;
-  }
-
-  .nav-item.active::before {
-    height: 24px;
-  }
-
-  .nav-item.active:focus {
-    box-shadow: inset 0 0 0 3px #e50914;
-  }
-
-  .nav-item svg {
-    width: 26px;
-    height: 26px;
-  }
-
-  .nav-badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: #e50914;
-    color: #fff;
-    font-size: 0.7rem;
-    font-weight: 600;
-    min-width: 18px;
-    height: 18px;
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 4px;
-  }
-
-  /* Omnius Logo */
-  .logo-container {
-    width: 50px;
-    height: 50px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 16px;
-  }
-
-  .omnius-logo {
-    width: 32px;
-    height: 32px;
   }
 
   /* Main Content - scrollable area */
@@ -1074,15 +1708,15 @@
     height: 85vh;
     min-height: 550px;
     max-height: 900px;
-    background-size: cover;
-    background-position: center top;
     display: flex;
     align-items: flex-end;
+    overflow: hidden;
   }
 
   .hero-gradient {
     position: absolute;
     inset: 0;
+    z-index: 5;
     background: linear-gradient(
       to right,
       rgba(20, 20, 20, 0.95) 0%,
@@ -1226,6 +1860,28 @@
   .btn-play svg, .btn-info svg {
     width: 28px;
     height: 28px;
+  }
+
+  /* Hero background layers for crossfade */
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center top;
+  }
+
+  .hero-bg-back {
+    z-index: 0;
+  }
+
+  .hero-bg-front {
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+  }
+
+  .hero-bg-front.visible {
+    opacity: 1;
   }
 
   /* Content */
@@ -1426,6 +2082,91 @@
     font-size: 1.4rem;
     font-weight: 600;
     margin: 0 0 24px;
+  }
+
+  .movies-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .curated-tabs {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .curated-tab {
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 24px;
+    color: #aaa;
+    font-size: 0.95rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .curated-tab:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  .curated-tab.active {
+    background: #e50914;
+    border-color: #e50914;
+    color: #fff;
+  }
+
+  .curated-tab:focus,
+  .curated-tab:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+  }
+
+  .year-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 12px;
+  }
+
+  .year-card {
+    padding: 20px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+
+  .year-card:hover {
+    background: rgba(229, 9, 20, 0.3);
+    border-color: rgba(229, 9, 20, 0.5);
+    transform: scale(1.05);
+  }
+
+  .year-card:focus,
+  .year-card:focus-visible {
+    outline: none;
+    border-color: #e50914;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+  }
+
+  .loading-spinner {
+    display: flex;
+    justify-content: center;
+    padding: 60px 0;
   }
 
   .genre-grid {
@@ -1660,7 +2401,8 @@
   }
 
   /* Live header with toggle */
-  .live-header {
+  .live-header,
+  .tv-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1669,7 +2411,8 @@
     gap: 16px;
   }
 
-  .live-header .category-title {
+  .live-header .category-title,
+  .tv-header .category-title {
     margin: 0;
   }
 
@@ -1715,6 +2458,78 @@
   .toggle-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+  }
+
+  /* TV Series green theme */
+  .toggle-btn.tv-toggle.active {
+    background: #2ecc71;
+  }
+
+  .toggle-btn.tv-toggle:focus,
+  .toggle-btn.tv-toggle:focus-visible {
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
+  }
+
+  .curated-tab.tv-tab.active {
+    color: #fff;
+    background: #2ecc71;
+  }
+
+  .curated-tab.tv-tab:focus,
+  .curated-tab.tv-tab:focus-visible {
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
+    border-color: #2ecc71;
+  }
+
+  .spinner.tv-spinner {
+    border-color: rgba(46, 204, 113, 0.2);
+    border-top-color: #2ecc71;
+  }
+
+  .genre-card.tv-genre-card:hover {
+    background: rgba(46, 204, 113, 0.15);
+    border-color: #2ecc71;
+  }
+
+  .genre-card.tv-genre-card:focus,
+  .genre-card.tv-genre-card:focus-visible {
+    border-color: #2ecc71;
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
+  }
+
+  /* Network grid */
+  .network-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .network-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .network-card:hover {
+    background: rgba(46, 204, 113, 0.15);
+    border-color: #2ecc71;
+  }
+
+  .network-card:focus,
+  .network-card:focus-visible {
+    outline: none;
+    border-color: #2ecc71;
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
   }
 
   .group-count {
@@ -1899,24 +2714,10 @@
   }
 
   @media (max-width: 900px) {
-    .sidebar {
-      width: 60px;
-    }
-
     .main-content {
       margin-left: 60px;
       height: 100vh;
       height: 100dvh;
-    }
-
-    .nav-item {
-      width: 44px;
-      height: 44px;
-    }
-
-    .nav-item svg {
-      width: 22px;
-      height: 22px;
     }
 
     .hero-content {
@@ -1944,10 +2745,6 @@
   }
 
   @media (max-width: 600px) {
-    .sidebar {
-      display: none;
-    }
-
     .main-content {
       margin-left: 0;
     }
@@ -1987,5 +2784,83 @@
     .genre-grid {
       grid-template-columns: repeat(2, 1fr);
     }
+  }
+
+  /* Inline Search Styles */
+  .search-section {
+    padding: 20px 0;
+  }
+
+  .inline-search-form {
+    display: flex;
+    gap: 12px;
+    max-width: 500px;
+    margin-bottom: 24px;
+  }
+
+  .inline-search-input {
+    flex: 1;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+  }
+
+  .inline-search-input:focus {
+    outline: none;
+    border-color: #e50914;
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .inline-search-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .inline-search-btn {
+    padding: 12px 20px;
+    background: #e50914;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+  }
+
+  .inline-search-btn:hover {
+    background: #f40612;
+  }
+
+  .inline-search-btn:disabled {
+    background: #666;
+    cursor: not-allowed;
+  }
+
+  .inline-search-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .spinner.small {
+    width: 20px;
+    height: 20px;
+  }
+
+  .search-results-count {
+    color: #888;
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+  }
+
+  .no-results {
+    color: #888;
+    text-align: center;
+    padding: 40px 0;
+    font-size: 1.1rem;
   }
 </style>

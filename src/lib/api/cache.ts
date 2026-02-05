@@ -1,9 +1,16 @@
 // API Response Caching with TTL and validation
-import { browser } from "$app/environment";
+import { browser, dev } from "$app/environment";
+
+// Disable cache in dev mode
+const CACHE_DISABLED = dev;
+
+// Cache version - increment this when data source changes
+const CACHE_VERSION = 4;  // v4: franchise data updated
 
 interface CacheEntry<T> {
   data: T;
   timestamp: number;
+  version?: number;  // Cache version for invalidation
   etag?: string;
   hash?: string;  // Simple hash of the data for comparison
 }
@@ -15,10 +22,10 @@ interface CacheConfig {
 
 // Cache TTLs
 export const CACHE_TTL = {
-  MOVIES_LIST: 30 * 60 * 1000,      // 30 minutes for movie lists
-  MOVIE_DETAILS: 60 * 60 * 1000,    // 1 hour for movie details
-  SUGGESTIONS: 60 * 60 * 1000,      // 1 hour for suggestions
-  HOME_DATA: 15 * 60 * 1000,        // 15 minutes for home page data
+  MOVIES_LIST: 15 * 60 * 1000,      // 15 minutes for movie lists
+  MOVIE_DETAILS: 5 * 60 * 1000,     // 5 minutes for movie details
+  SUGGESTIONS: 15 * 60 * 1000,      // 15 minutes for suggestions
+  HOME_DATA: 10 * 60 * 1000,        // 10 minutes for home page data
   IPTV: 24 * 60 * 60 * 1000,        // 24 hours for IPTV data
 };
 
@@ -43,6 +50,14 @@ export function getCache<T>(key: string, ttl: number): T | null {
     if (!raw) return null;
 
     const entry: CacheEntry<T> = JSON.parse(raw);
+
+    // Check cache version - invalidate old caches
+    if (entry.version !== CACHE_VERSION) {
+      console.log(`[Cache] VERSION MISMATCH: ${key} (v${entry.version} vs v${CACHE_VERSION})`);
+      localStorage.removeItem(`cache_${key}`);
+      return null;
+    }
+
     const age = Date.now() - entry.timestamp;
 
     if (age < ttl) {
@@ -66,6 +81,7 @@ export function setCache<T>(key: string, data: T): void {
     const entry: CacheEntry<T> = {
       data,
       timestamp: Date.now(),
+      version: CACHE_VERSION,
       hash: simpleHash(data),
     };
     localStorage.setItem(`cache_${key}`, JSON.stringify(entry));
@@ -134,7 +150,8 @@ export function clearOldCaches(): void {
         const raw = localStorage.getItem(key);
         if (raw) {
           const entry = JSON.parse(raw);
-          if (now - entry.timestamp > maxAge) {
+          // Remove if old version or expired
+          if (entry.version !== CACHE_VERSION || now - entry.timestamp > maxAge) {
             localStorage.removeItem(key);
             console.log(`[Cache] Removed old cache: ${key}`);
           }
@@ -146,6 +163,13 @@ export function clearOldCaches(): void {
   }
 }
 
+// Initialize cache - clear old version caches
+export function initCache(): void {
+  if (!browser) return;
+  console.log(`[Cache] Initializing v${CACHE_VERSION}`);
+  clearOldCaches();
+}
+
 // Wrapper for cached API calls
 export async function cachedFetch<T>(
   key: string,
@@ -153,6 +177,12 @@ export async function cachedFetch<T>(
   fetchFn: () => Promise<T>,
   forceRefresh: boolean = false
 ): Promise<T> {
+  // Skip cache entirely in dev mode
+  if (CACHE_DISABLED) {
+    console.log(`[Cache] DEV MODE - skipping cache for: ${key}`);
+    return await fetchFn();
+  }
+
   // Check cache first (unless force refresh)
   if (!forceRefresh) {
     const cached = getCache<T>(key, ttl);

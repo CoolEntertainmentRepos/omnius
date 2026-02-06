@@ -176,14 +176,14 @@
 
 <style>
   .movie-row {
-    margin-bottom: 50px;
+    margin-bottom: 20px;
   }
 
   .row-title {
-    font-size: 1.6rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    margin: 0 0 20px;
-    padding: 0 80px;
+    margin: 0 0 8px;
+    padding: 0 40px;
     color: #fff;
   }
 
@@ -193,10 +193,10 @@
 
   .movies-scroll {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     overflow-x: auto;
     scroll-behavior: smooth;
-    padding: 20px 80px 30px;
+    padding: 8px 40px 12px;
     scrollbar-width: none;
   }
 
@@ -443,12 +443,12 @@
 
   @media (max-width: 1200px) {
     .row-title {
-      padding: 0 60px;
-      font-size: 1.4rem;
+      padding: 0 40px;
+      font-size: 1rem;
     }
 
     .movies-scroll {
-      padding: 10px 60px 24px;
+      padding: 8px 40px 12px;
     }
 
     .scroll-btn {
@@ -468,13 +468,13 @@
 
   @media (max-width: 900px) {
     .row-title {
-      padding: 0 40px;
-      font-size: 1.3rem;
+      padding: 0 32px;
+      font-size: 0.95rem;
     }
 
     .movies-scroll {
-      padding: 8px 40px 20px;
-      gap: 10px;
+      padding: 6px 32px 10px;
+      gap: 8px;
     }
 
     .scroll-btn {
@@ -504,13 +504,13 @@
 
   @media (max-width: 600px) {
     .row-title {
-      padding: 0 24px;
-      font-size: 1.2rem;
+      padding: 0 20px;
+      font-size: 0.9rem;
     }
 
     .movies-scroll {
-      padding: 8px 24px 16px;
-      gap: 10px;
+      padding: 6px 20px 10px;
+      gap: 8px;
     }
 
     .scroll-btn {

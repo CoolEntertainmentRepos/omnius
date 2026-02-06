@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- ExoPlayer View -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/live_player_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:use_controller="false"
+        app:show_buffering="never" />
+
+    <!-- Buffering Spinner (center) -->
+    <ProgressBar
+        android:id="@+id/live_buffering_spinner"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="center"
+        android:visibility="visible"
+        android:indeterminateTint="#E50914" />
+
+    <!-- Controls Overlay: just title bar at top -->
+    <LinearLayout
+        android:id="@+id/live_controls_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="24dp"
+        android:background="@drawable/live_top_gradient"
+        android:layout_gravity="top">
+
+        <ImageButton
+            android:id="@+id/live_btn_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:background="@drawable/btn_circle_focus"
+            android:contentDescription="Close"
+            android:focusable="true"
+            android:scaleType="centerInside"
+            android:padding="12dp"
+            app:tint="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/live_txt_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="16dp"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+    </LinearLayout>
+
+</FrameLayout>

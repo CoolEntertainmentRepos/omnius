@@ -42,6 +42,66 @@ impl SubtitleClient {
         self.search_opensubtitles_rest(imdb).await
     }
 
+    /// Search subtitles by release/file name for better sync matching
+    /// Uses SubDL's file_name parameter to find subs that match the exact encode/release
+    pub async fn search_by_filename(&self, filename: &str, languages: Option<&str>) -> Result<SubtitleSearchResult, String> {
+        println!("[SubtitleClient] Searching subtitles by filename: {}", filename);
+
+        let mut url = format!("{}?api_key={}", SUBDL_API_URL, SUBDL_API_KEY);
+        // Basic URL encoding for the filename parameter
+        url.push_str(&format!("&file_name={}", filename.replace(' ', "%20").replace('&', "%26").replace('#', "%23").replace('+', "%2B")));
+
+        if let Some(langs) = languages {
+            url.push_str(&format!("&languages={}", langs));
+        }
+
+        let response = self.client
+            .get(&url)
+            .header("User-Agent", "Streamer v1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch subtitles by filename: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("SubDL API error: {}", response.status()));
+        }
+
+        let data: SubDlResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse SubDL response: {}", e))?;
+
+        if !data.status {
+            return Ok(SubtitleSearchResult {
+                subtitles: vec![],
+                total_count: 0,
+            });
+        }
+
+        let subtitles: Vec<Subtitle> = data.subtitles
+            .into_iter()
+            .map(|sub| Subtitle {
+                id: sub.url.clone(),
+                language: sub.language.to_lowercase(),
+                language_name: sub.lang.clone(),
+                download_url: format!("https://dl.subdl.com{}", sub.url),
+                release_name: Some(sub.release_name),
+                uploader: sub.author.clone(),
+                download_count: 0,
+                hearing_impaired: sub.hi,
+                fps: None,
+            })
+            .collect();
+
+        let total_count = subtitles.len() as i32;
+        println!("[SubtitleClient] Found {} subtitles by filename", total_count);
+
+        Ok(SubtitleSearchResult {
+            subtitles,
+            total_count,
+        })
+    }
+
     async fn search_subdl(&self, imdb_id: &str, api_key: &str, languages: Option<&str>) -> Result<SubtitleSearchResult, String> {
         let mut url = format!("{}?api_key={}&imdb_id=tt{}", SUBDL_API_URL, api_key, imdb_id);
 

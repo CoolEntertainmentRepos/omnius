@@ -2,6 +2,7 @@ package lol.omnius.tv
 
 import android.os.Bundle
 import android.view.KeyEvent
+import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 
@@ -9,6 +10,11 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    // Disable WebView cache so assets always load fresh from APK
+    window.decorView.post {
+      findWebView(window.decorView)?.settings?.cacheMode = WebSettings.LOAD_NO_CACHE
+    }
   }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {

@@ -4,10 +4,10 @@
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import { streamStore } from "$lib/stores/stream.svelte";
-  import { searchSubtitles, startStream, downloadSubtitle, checkStreamReady, serveSubtitle, recordView, streamStart, streamHeartbeat, streamEnd, type Subtitle } from "$lib/api/commands";
+  import { searchSubtitles, startStream, downloadSubtitle, checkStreamReady, serveSubtitle, recordView, streamStart, streamHeartbeat, streamEnd, listTorrentFiles, searchSubtitlesByFilename, type Subtitle, type TorrentFile } from "$lib/api/commands";
   import { makeFocusable } from "$lib/utils/tvNavigation";
   import { platform } from "@tauri-apps/plugin-os";
-  import { playVideo } from "tauri-plugin-videoplayer-api";
+  import { playVideo, onPlaybackEvent } from "tauri-plugin-videoplayer-api";
 
   let hash = $derived($page.params.hash || "");
   let title = $derived($page.url.searchParams.get("title") || "Movie");
@@ -16,6 +16,7 @@
   let movieId = $derived(parseInt($page.url.searchParams.get("movie_id") || "0"));
   let quality = $derived($page.url.searchParams.get("quality") || "");
   let fileIndex = $derived($page.url.searchParams.get("fileIndex") ? parseInt($page.url.searchParams.get("fileIndex")!) : undefined);
+  let isLiveStream = $derived(!!urlStreamUrl);
 
   let videoElement: HTMLVideoElement;
   let playerContainer: HTMLDivElement;
@@ -46,6 +47,16 @@
   let bufferingStartTime = $state<number | null>(null);
   let lastProgressCheck = $state(0);
   let stuckDetected = $state(false);
+
+  // Resume position
+  let resumePosition = $state<number>(0);
+  let nativeLastPosition = $state<number>(0);
+  let nativeDuration = $state<number>(0);
+
+  // Android native player phase tracking (for single-screen splash)
+  let androidPhase = $state<string>('');
+  let androidRequiredMB = $state<number>(0);
+  let androidDownloadedMB = $state<number>(0);
 
   // Analytics tracking
   let viewRecorded = $state(false);
@@ -93,17 +104,18 @@
     return false;
   });
 
-  // Watch for stream progress to know when ready to play
+  // Watch for stream progress to know when ready to play (desktop only)
+  // On Android, the splash stays visible until ExoPlayer launches directly
   $effect(() => {
     const progress = streamStore.progressPercent;
     const url = streamUrl;
     const ready = readyToPlay;
-    const buffer = hasEnoughBuffer;  // Now a value, not a function
+    const buffer = hasEnoughBuffer;
 
     console.log("[Player] Buffer check - streamUrl:", !!url, "readyToPlay:", ready,
-                "hasEnoughBuffer:", buffer, "progress:", progress.toFixed(1) + "%");
+                "hasEnoughBuffer:", buffer, "progress:", progress.toFixed(1) + "%", "isAndroid:", isAndroid);
 
-    if (url && !ready && buffer) {
+    if (url && !ready && buffer && !isAndroid) {
       console.log("[Player] Starting playback! progress:", progress.toFixed(1) + "%",
                   "speed:", streamStore.downloadSpeed, "peers:", streamStore.peersConnected);
       readyToPlay = true;
@@ -150,6 +162,13 @@
     const savedKey = localStorage.getItem("subdlApiKey");
     if (savedKey) subdlApiKey = savedKey;
 
+    // Load resume position for this hash
+    const savedPosition = localStorage.getItem(`resume_${hash}`);
+    if (savedPosition) {
+      resumePosition = parseInt(savedPosition, 10);
+      console.log("[Player] Resume position loaded:", resumePosition, "ms");
+    }
+
     // Stop any existing stream before starting a new one
     if (streamStore.isActive) {
       console.log("[Player] Stopping existing stream before starting new one");
@@ -184,34 +203,53 @@
       actualStreamUrl = urlStreamUrl || streamStore.streamUrl;
     }
 
-    // Start polling for stream stats
-    streamStore.beginStatsPolling(hash.toLowerCase());
+    // Start polling for stream stats (skip for live streams - no torrent to poll)
+    if (!isLiveStream) {
+      streamStore.beginStatsPolling(hash.toLowerCase());
+    }
 
     // On Android, use native ExoPlayer for full codec support (HEVC/x265)
-    // 2-phase buffer check + parallel subtitle loading
+    // Single-screen: splash stays visible the entire time until ExoPlayer launches
     if (isAndroid && actualStreamUrl) {
-      console.log("[Player] Android detected - 2-phase buffer + parallel subs");
+      console.log("[Player] Android detected - single-screen buffer + subtitle gathering");
+      androidPhase = 'Buffering video...';
 
-      // Start subtitle fetch in parallel (don't await yet)
-      let subtitlePromise: Promise<string | null> = Promise.resolve(null);
-      if (imdbCode) {
-        subtitlePromise = fetchAndServeSubtitle(imdbCode);
-      }
+      // Start gathering subtitles from ALL sources in parallel (don't await yet)
+      const subtitleGatherPromise = gatherAllSubtitles(hash, imdbCode);
 
-      // Phase 1: Wait for torrent buffer threshold
+      // Phase 1: Wait for enough torrent buffer so ExoPlayer starts instantly
       const waitForBuffer = async (): Promise<boolean> => {
-        const maxWait = 60000;
+        const maxWait = 120000;
         const startTime = Date.now();
+        const totalBytes = streamStore.stats?.total_bytes ?? 0;
 
         while (Date.now() - startTime < maxWait) {
           const progress = streamStore.progressPercent;
           const peers = streamStore.peersConnected;
+          const downloaded = streamStore.stats?.downloaded_bytes ?? 0;
+          const speedBytes = streamStore.stats?.download_speed ?? 0;
+          const speedMB = speedBytes / (1024 * 1024);
+          const downloadedMB = downloaded / (1024 * 1024);
 
-          console.log("[Player] Phase 1 buffer - progress:", progress.toFixed(2) + "%", "peers:", peers);
+          const estimatedDurationSec = 7200;
+          const bitrateBytes = totalBytes > 0 ? totalBytes / estimatedDurationSec : 0;
+          const thirtySecBuffer = bitrateBytes * 30;
+          const requiredBytes = Math.max(50 * 1024 * 1024, thirtySecBuffer);
+          const requiredMB = requiredBytes / (1024 * 1024);
 
-          if (progress >= 0.5 || (progress >= 0.1 && peers >= 2)) {
+          // Update reactive state for splash UI
+          androidDownloadedMB = Math.round(downloadedMB);
+          androidRequiredMB = Math.round(requiredMB);
+          androidPhase = `Buffering video... ${Math.round(downloadedMB)} / ${Math.round(requiredMB)} MB`;
+
+          console.log("[Player] Buffer - downloaded:", downloadedMB.toFixed(1) + "MB",
+            "required:", requiredMB.toFixed(0) + "MB",
+            "speed:", speedMB.toFixed(1) + "MB/s", "peers:", peers);
+
+          if (downloaded >= requiredBytes && speedMB > 0.3 && peers >= 1) {
             return true;
           }
+          if (progress >= 8) return true;
 
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -226,12 +264,16 @@
       }
 
       // Phase 2: Verify stream is actually serving data via HTTP
-      console.log("[Player] Phase 2 - verifying stream serves data...");
+      androidPhase = 'Verifying stream...';
+      console.log("[Player] Verifying stream serves data...");
       let streamReady = false;
       for (let i = 0; i < 10; i++) {
         try {
           streamReady = await checkStreamReady(actualStreamUrl);
-          if (streamReady) break;
+          if (streamReady) {
+            console.log("[Player] Stream ready confirmed");
+            break;
+          }
         } catch (e) {
           console.log("[Player] Stream ready check error:", e);
         }
@@ -243,28 +285,69 @@
         return;
       }
 
-      // Wait for subtitle fetch (max 10s timeout, don't block playback forever)
-      console.log("[Player] Waiting for subtitle fetch...");
-      let nativeSubtitleUrl: string | null = null;
+      // Phase 3: Wait for subtitle gathering (max 5s, don't block playback)
+      // Subtitles started in parallel during buffering so should be mostly done
+      androidPhase = 'Loading subtitles...';
+      let subtitleTracks: Array<{ url: string; language: string; label: string; mimeType: string }> = [];
       try {
-        nativeSubtitleUrl = await Promise.race([
-          subtitlePromise,
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 10000))
+        subtitleTracks = await Promise.race([
+          subtitleGatherPromise,
+          new Promise<typeof subtitleTracks>(resolve => setTimeout(() => resolve([]), 5000))
         ]);
       } catch (e) {
-        console.log("[Player] Subtitle fetch failed, continuing without subs:", e);
+        console.log("[Player] Subtitle gathering failed, continuing without subs:", e);
       }
 
-      console.log("[Player] Launching ExoPlayer - video:", actualStreamUrl, "subtitle:", nativeSubtitleUrl);
+      androidPhase = 'Launching player...';
+      console.log("[Player] Launching ExoPlayer with", subtitleTracks.length, "subtitle tracks, resume:", resumePosition);
+
+      // Register event listeners in parallel before launching
+      const listeners: Array<{ remove?: () => void; unregister?: () => void }> = [];
       try {
-        await playVideo(actualStreamUrl, nativeSubtitleUrl ?? undefined);
+        const [posListener, stateListener, errListener] = await Promise.all([
+          onPlaybackEvent('positionUpdate', (event: any) => {
+            nativeLastPosition = event.position || 0;
+            nativeDuration = event.duration || 0;
+            if (nativeLastPosition > 0) {
+              localStorage.setItem(`resume_${hash}`, String(nativeLastPosition));
+            }
+          }),
+          onPlaybackEvent('playbackState', (event: any) => {
+            console.log("[Player] Native state:", event.state);
+          }),
+          onPlaybackEvent('playerError', (event: any) => {
+            console.error("[Player] Native player error:", event.message);
+          }),
+        ]);
+        listeners.push(posListener, stateListener, errListener);
+      } catch (e) {
+        console.log("[Player] Event listener registration failed (non-critical):", e);
+      }
+
+      try {
+        await playVideo(actualStreamUrl, undefined, {
+          subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
+          startPosition: resumePosition > 0 ? resumePosition : undefined,
+          title: title,
+        });
+
         nativePlayerLaunched = true;
-        console.log("[Player] Native ExoPlayer launched - stream kept alive");
-        return;
+
+        // Position already saved via positionUpdate event listener
+        console.log("[Player] Native ExoPlayer finished, last position:", nativeLastPosition);
+        handleBack();
       } catch (err) {
         console.error("[Player] Native player failed:", err);
         error = "Native player failed: " + (err instanceof Error ? err.message : String(err));
+      } finally {
+        // Clean up event listeners
+        for (const listener of listeners) {
+          try { (listener.remove || listener.unregister)?.(); } catch {}
+        }
       }
+
+      // IMPORTANT: Always return after Android block - never fall through to desktop path
+      return;
     }
 
     // Desktop: Fetch subtitles from OpenSubtitles (using IMDB code)
@@ -361,6 +444,158 @@
       console.error("[Player] Failed to fetch/serve subtitle:", err);
       return null;
     }
+  }
+
+  /** Map language code to display name */
+  function langToName(code: string): string {
+    const map: Record<string, string> = {
+      en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+      pt: 'Portuguese', nl: 'Dutch', pl: 'Polish', ru: 'Russian', ja: 'Japanese',
+      ko: 'Korean', zh: 'Chinese', ar: 'Arabic', hi: 'Hindi', tr: 'Turkish',
+      sq: 'Albanian', sr: 'Serbian', hr: 'Croatian', bg: 'Bulgarian', ro: 'Romanian',
+      cs: 'Czech', sk: 'Slovak', hu: 'Hungarian', sv: 'Swedish', da: 'Danish',
+      fi: 'Finnish', no: 'Norwegian', el: 'Greek', he: 'Hebrew', th: 'Thai',
+      vi: 'Vietnamese', id: 'Indonesian', ms: 'Malay', uk: 'Ukrainian', und: 'Unknown',
+    };
+    return map[code.toLowerCase()] || code.toUpperCase();
+  }
+
+  /**
+   * Gather subtitles from ALL sources in parallel:
+   * 1. Embedded in torrent (highest priority - already downloaded, perfectly synced)
+   * 2. External search by release/file name (best sync match)
+   * 3. External search by IMDB (broadest results, fallback)
+   * Returns an array of subtitle track objects ready for ExoPlayer.
+   */
+  async function gatherAllSubtitles(
+    torrentHash: string,
+    imdb: string
+  ): Promise<Array<{ url: string; language: string; label: string; mimeType: string }>> {
+    const tracks: Array<{ url: string; language: string; label: string; mimeType: string }> = [];
+    const seenLanguages = new Set<string>();
+
+    let languages: string | undefined;
+    if (preferredLanguage) {
+      languages = preferredLanguage === "en" ? "en" : `${preferredLanguage},en`;
+    }
+
+    // Run all searches in parallel
+    const [embeddedFiles, filenameResults, imdbResults] = await Promise.allSettled([
+      // 1. Embedded subtitles from torrent
+      listTorrentFiles(torrentHash).catch(() => [] as TorrentFile[]),
+      // 2. Search by release name (if we have torrent files, use the video filename)
+      (async () => {
+        try {
+          const files = await listTorrentFiles(torrentHash);
+          const videoFile = files.find(f => !f.is_subtitle && f.length > 10_000_000);
+          if (videoFile) {
+            return await searchSubtitlesByFilename(videoFile.name, languages);
+          }
+        } catch {}
+        return { subtitles: [] as Subtitle[], total_count: 0 };
+      })(),
+      // 3. Search by IMDB ID
+      imdb ? searchSubtitles(imdb, subdlApiKey, languages).catch(() => ({ subtitles: [] as Subtitle[], total_count: 0 })) : Promise.resolve({ subtitles: [] as Subtitle[], total_count: 0 }),
+    ]);
+
+    // Process embedded subtitles (highest priority)
+    if (embeddedFiles.status === 'fulfilled') {
+      const files = embeddedFiles.value as TorrentFile[];
+      for (const file of files) {
+        if (file.is_subtitle) {
+          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+          const mimeType = ext === 'srt' ? 'application/x-subrip'
+            : ext === 'vtt' ? 'text/vtt'
+            : ext === 'ass' || ext === 'ssa' ? 'text/x-ssa'
+            : 'application/x-subrip';
+
+          // Extract language from filename
+          // Handles: "Subs/English.srt", "Movie.en.srt", "2_English.srt"
+          const basename = file.name.split('/').pop()?.replace(/\.[^.]+$/, '') || '';
+          const nameParts = basename.split(/[._-]/);
+          const lastPart = nameParts[nameParts.length - 1]?.toLowerCase() || '';
+          // Check if it's a known language name (e.g., "English", "Albanian")
+          const knownLangs: Record<string, string> = {
+            english: 'en', spanish: 'es', french: 'fr', german: 'de', italian: 'it',
+            portuguese: 'pt', dutch: 'nl', polish: 'pl', russian: 'ru', japanese: 'ja',
+            korean: 'ko', chinese: 'zh', arabic: 'ar', hindi: 'hi', turkish: 'tr',
+            albanian: 'sq', serbian: 'sr', croatian: 'hr', bulgarian: 'bg', romanian: 'ro',
+            czech: 'cs', slovak: 'sk', hungarian: 'hu', swedish: 'sv', danish: 'da',
+            finnish: 'fi', norwegian: 'no', greek: 'el', hebrew: 'he', thai: 'th',
+            vietnamese: 'vi', indonesian: 'id', malay: 'ms', ukrainian: 'uk',
+          };
+          const lang = knownLangs[lastPart] || (lastPart.length === 2 || lastPart.length === 3 ? lastPart : 'und');
+          const label = langToName(lang);
+
+          // Build URL from stream server
+          const subUrl = actualStreamUrl?.replace(/\/stream\/([^/]+)\/\d+/, `/stream/$1/${file.index}`) || '';
+          if (subUrl) {
+            tracks.push({ url: subUrl, language: lang, label, mimeType });
+            seenLanguages.add(lang);
+            console.log("[Player] Embedded subtitle:", file.name, "lang:", lang);
+          }
+        }
+      }
+    }
+
+    // Process filename search results (better sync match)
+    if (filenameResults.status === 'fulfilled') {
+      const result = filenameResults.value as { subtitles: Subtitle[]; total_count: number };
+      for (const sub of result.subtitles) {
+        // Skip if we already have this language from embedded
+        if (seenLanguages.has(sub.language)) continue;
+        try {
+          const url = await serveSubtitle(sub.download_url);
+          tracks.push({
+            url,
+            language: sub.language,
+            label: sub.language_name || langToName(sub.language),
+            mimeType: 'text/vtt', // serveSubtitle converts to VTT
+          });
+          seenLanguages.add(sub.language);
+          console.log("[Player] Filename-matched subtitle:", sub.language_name);
+        } catch (e) {
+          console.log("[Player] Failed to serve subtitle:", e);
+        }
+      }
+    }
+
+    // Process IMDB search results (broadest, fallback)
+    if (imdbResults.status === 'fulfilled') {
+      const result = imdbResults.value as { subtitles: Subtitle[]; total_count: number };
+      for (const sub of result.subtitles) {
+        if (seenLanguages.has(sub.language)) continue;
+        try {
+          const url = await serveSubtitle(sub.download_url);
+          tracks.push({
+            url,
+            language: sub.language,
+            label: sub.language_name || langToName(sub.language),
+            mimeType: 'text/vtt',
+          });
+          seenLanguages.add(sub.language);
+          console.log("[Player] IMDB-matched subtitle:", sub.language_name);
+        } catch (e) {
+          console.log("[Player] Failed to serve subtitle:", e);
+        }
+      }
+    }
+
+    // Sort: preferred language first, then English, then rest alphabetically
+    tracks.sort((a, b) => {
+      const aIsPreferred = a.language === preferredLanguage;
+      const bIsPreferred = b.language === preferredLanguage;
+      const aIsEnglish = a.language === 'en';
+      const bIsEnglish = b.language === 'en';
+      if (aIsPreferred && !bIsPreferred) return -1;
+      if (!aIsPreferred && bIsPreferred) return 1;
+      if (aIsEnglish && !bIsEnglish) return -1;
+      if (!aIsEnglish && bIsEnglish) return 1;
+      return a.label.localeCompare(b.label);
+    });
+
+    console.log("[Player] Total subtitle tracks gathered:", tracks.length, tracks.map(t => t.label));
+    return tracks;
   }
 
   async function fetchSubtitlesAndAutoLoad(imdb: string) {
@@ -685,15 +920,24 @@
   // and could integrate with a subtitle download service in the future.
 
   function handleBack() {
-    // Stop stream and go back
     streamStore.stop();
-    history.back();
+    if (movieId > 0) {
+      goto(`/movie/${movieId}`);
+    } else {
+      goto('/?tab=movies');
+    }
   }
 
   async function replayNative() {
     if (!actualStreamUrl) return;
     try {
-      await playVideo(actualStreamUrl, servedSubtitleUrl ?? undefined);
+      const subtitleTracks = await gatherAllSubtitles(hash, imdbCode);
+      await playVideo(actualStreamUrl, undefined, {
+        subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
+        startPosition: nativeLastPosition > 0 ? nativeLastPosition : undefined,
+        title: title,
+      });
+      // Position saved via positionUpdate event listener
     } catch (err) {
       console.error("[Player] Native replay failed:", err);
       error = "Native player failed: " + (err instanceof Error ? err.message : String(err));
@@ -757,7 +1001,7 @@
   aria-label="Video player"
 >
   {#if nativePlayerLaunched && !error}
-    <!-- Native player return screen -->
+    <!-- Native player return screen (torrent movies) -->
     <div class="native-return-overlay">
       <div class="native-return-content">
         <h1 class="native-return-title">{title}</h1>
@@ -832,22 +1076,42 @@
       </div>
     </div>
   {:else if !readyToPlay}
-    <!-- Loading Splash - shown until video is ready -->
+    <!-- Loading Splash - shown until video/native player is ready -->
     <div class="loading-splash">
       <div class="splash-content">
         <h1 class="splash-title">{title}</h1>
         <div class="splash-spinner" class:spinner-slow={stuckDetected}></div>
-        <p class="splash-status">{isStartingStream ? "Connecting to peers..." : "Buffering video..."}</p>
+        <p class="splash-status">
+          {#if isAndroid && androidPhase}
+            {androidPhase}
+          {:else}
+            {isStartingStream ? "Connecting to peers..." : "Buffering video..."}
+          {/if}
+        </p>
 
-        <div class="splash-progress-bar">
-          <div class="splash-progress-fill" style="width: {Math.min(streamStore.progressPercent * 50, 100)}%"></div>
-        </div>
+        {#if isAndroid && androidRequiredMB > 0}
+          <!-- Android: show MB progress bar toward launch threshold -->
+          <div class="splash-progress-bar">
+            <div class="splash-progress-fill" style="width: {Math.min((androidDownloadedMB / androidRequiredMB) * 100, 100)}%"></div>
+          </div>
+        {:else}
+          <div class="splash-progress-bar">
+            <div class="splash-progress-fill" style="width: {Math.min(streamStore.progressPercent * 50, 100)}%"></div>
+          </div>
+        {/if}
 
         <div class="splash-stats">
-          <div class="splash-stat">
-            <span class="splash-stat-value">{streamStore.progressPercent.toFixed(1)}%</span>
-            <span class="splash-stat-label">Buffered</span>
-          </div>
+          {#if isAndroid && androidRequiredMB > 0}
+            <div class="splash-stat">
+              <span class="splash-stat-value">{androidDownloadedMB} / {androidRequiredMB} MB</span>
+              <span class="splash-stat-label">Downloaded</span>
+            </div>
+          {:else}
+            <div class="splash-stat">
+              <span class="splash-stat-value">{streamStore.progressPercent.toFixed(1)}%</span>
+              <span class="splash-stat-label">Buffered</span>
+            </div>
+          {/if}
           <div class="splash-stat">
             <span class="splash-stat-value">{streamStore.downloadSpeed}</span>
             <span class="splash-stat-label">Speed</span>
@@ -1473,6 +1737,83 @@
   .error-btn.primary:hover {
     background: #f40612;
     border-color: #f40612;
+  }
+
+  /* Live stream return screen */
+  .live-return-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    background: #000;
+    color: #fff;
+    z-index: 10;
+    padding: 40px;
+  }
+
+  .live-return-top {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .live-return-title {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    margin-right: 16px;
+  }
+
+  .live-close-btn {
+    width: 48px;
+    height: 48px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+
+  .live-close-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .live-close-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px #e50914;
+    background: rgba(229, 9, 20, 0.3);
+  }
+
+  .live-close-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .live-return-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #666;
+    font-size: 0.85rem;
+    padding-bottom: 20px;
+  }
+
+  .live-return-hint svg {
+    width: 20px;
+    height: 20px;
+    opacity: 0.5;
   }
 
   .native-return-overlay {

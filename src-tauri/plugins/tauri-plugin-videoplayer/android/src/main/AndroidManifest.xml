@@ -7,5 +7,10 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             />
+        <activity
+            android:name=".LivePlayerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            />
     </application>
 </manifest>

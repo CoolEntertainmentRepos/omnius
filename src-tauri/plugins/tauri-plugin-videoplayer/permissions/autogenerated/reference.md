@@ -6,6 +6,7 @@ Default permissions for the plugin
 
 - `allow-ping`
 - `allow-play-video`
+- `allow-play-live-video`
 - `allow-force-focus`
 
 ## Permission Table
@@ -65,6 +66,32 @@ Enables the ping command without any pre-configured scope.
 <td>
 
 Denies the ping command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`videoplayer:allow-play-live-video`
+
+</td>
+<td>
+
+Enables the play_live_video command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`videoplayer:deny-play-live-video`
+
+</td>
+<td>
+
+Denies the play_live_video command without any pre-configured scope.
 
 </td>
 </tr>

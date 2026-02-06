@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import { page } from "$app/stores";
@@ -12,7 +12,7 @@
   import SearchSection from "$lib/components/SearchSection.svelte";
   import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
-  import { makeFocusable, addSection } from "$lib/utils/tvNavigation";
+  import { makeFocusable, addSection, setFocus } from "$lib/utils/tvNavigation";
   import type { Movie, MovieRating, Series, ListSeriesParams, Channel } from "$lib/api/types";
 
   // Category rows data
@@ -197,11 +197,8 @@
         }
       });
 
-      // Focus on first movie card by default for quick access
-      const firstMovieCard = document.querySelector<HTMLElement>('.movie-card');
-      if (firstMovieCard) {
-        firstMovieCard.focus();
-      }
+      // Focus on Home nav button immediately for TV D-pad navigation
+      setFocus('.nav-item[aria-label="Home"]');
     }, 300);
 
     // Cleanup on unmount
@@ -542,6 +539,8 @@
     selectedGroup = null;
     if (mode !== 'search') {
       updateChannelGroups();
+      // Focus first group after DOM update
+      tick().then(() => setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100));
     } else {
       channelSearchQuery = '';
       channelSearchResults = [];
@@ -572,6 +571,8 @@
       console.error('Failed to load year movies:', err);
     } finally {
       yearLoading = false;
+      await tick();
+      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
     }
   }
 
@@ -585,6 +586,8 @@
       console.error('Failed to load curated list:', err);
     } finally {
       curatedLoading = false;
+      await tick();
+      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
     }
   }
 
@@ -636,9 +639,27 @@
     }
   }
 
+  async function selectGroup(group: string) {
+    selectedGroup = group;
+    await tick();
+    setTimeout(() => { makeFocusable(); setFocus('.channel-list-item'); }, 100);
+  }
+
+  async function deselectGroup() {
+    selectedGroup = null;
+    await tick();
+    setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100);
+  }
+
   function playChannel(channel: IPTVChannel) {
     if (channel.url) {
-      goto(`/player/live?url=${encodeURIComponent(channel.url)}&title=${encodeURIComponent(channel.name)}`);
+      // Store current channel list for up/down switching in player
+      const group = selectedGroup;
+      const channels = group ? getChannelsInGroup(group) : iptvChannels;
+      const channelList = channels.filter(ch => ch.url).map(ch => ({ name: ch.name, url: ch.url! }));
+      const idx = channelList.findIndex(ch => ch.url === channel.url);
+      sessionStorage.setItem('liveChannelList', JSON.stringify(channelList));
+      goto(`/live?url=${encodeURIComponent(channel.url)}&title=${encodeURIComponent(channel.name)}&chIdx=${idx}`);
     }
   }
 
@@ -784,13 +805,22 @@
       await loadTVSeries();
     }
 
-    // Auto-focus search input when entering search
-    if (nav === "search") {
-      setTimeout(() => {
-        const searchInput = document.querySelector<HTMLInputElement>(".search-input");
-        searchInput?.focus();
-      }, 100);
-    }
+    // Auto-focus first content element after nav change
+    setTimeout(async () => {
+      await tick();
+      makeFocusable();
+      if (nav === "search") {
+        setFocus('.search-input');
+      } else if (nav === "live") {
+        setFocus('.genre-card');
+      } else if (nav === "movies") {
+        setFocus('.curated-tab, .movie-card');
+      } else if (nav === "tv") {
+        setFocus('.toggle-btn.tv-toggle, .series-card, .movie-card');
+      } else if (nav === "home") {
+        setFocus('.featured-actions button, .movie-card');
+      }
+    }, 200);
   }
 
   function handleSearchInput() {
@@ -862,6 +892,8 @@
       genreTotal = 0;
     } finally {
       genreLoading = false;
+      await tick();
+      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
     }
   }
 
@@ -948,8 +980,7 @@
     const target = e.target as HTMLInputElement;
     if (e.key === "ArrowLeft" && target.selectionStart === 0) {
       e.preventDefault();
-      const activeNavItem = document.querySelector<HTMLElement>(".nav-item.active");
-      activeNavItem?.focus();
+      setFocus('.nav-item.active');
     }
   }
 </script>
@@ -1278,7 +1309,7 @@
           <SearchSection type="channels" channels={iptvChannels.map(ch => ({ id: ch.id, name: ch.name, logo: ch.logo, stream_url: ch.url, country: ch.country, categories: ch.categories, languages: ch.languages }))} />
         {:else if selectedGroup}
           <div class="genre-header">
-            <button class="back-btn" onclick={() => selectedGroup = null} aria-label="Go back">
+            <button class="back-btn" onclick={() => deselectGroup()} aria-label="Go back">
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
               </svg>
@@ -1309,7 +1340,7 @@
           <p class="channels-info">{iptvChannels.length} channels available</p>
           <div class="genre-grid">
             {#each channelGroups as group (group)}
-              <button class="genre-card" onclick={() => selectedGroup = group}>
+              <button class="genre-card" onclick={() => selectGroup(group)}>
                 {getGroupName(group)}
                 <span class="group-count">({getChannelsInGroup(group).length})</span>
               </button>
@@ -1407,7 +1438,7 @@
           <!-- Genre Grid -->
           {#if selectedGenre}
             <div class="genre-header">
-              <button class="back-btn" onclick={() => { selectedGenre = null; }} aria-label="Go back">
+              <button class="back-btn" onclick={async () => { selectedGenre = null; await tick(); setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100); }} aria-label="Go back">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
                 </svg>
@@ -1435,7 +1466,7 @@
           <!-- Year Selection -->
           {#if selectedYear}
             <div class="genre-header">
-              <button class="back-btn" onclick={() => { selectedYear = null; yearMovies = []; }} aria-label="Go back">
+              <button class="back-btn" onclick={async () => { selectedYear = null; yearMovies = []; await tick(); setTimeout(() => { makeFocusable(); setFocus('.year-card'); }, 100); }} aria-label="Go back">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
                 </svg>
@@ -1645,9 +1676,9 @@
   /* Hero */
   .hero {
     position: relative;
-    height: 85vh;
-    min-height: 550px;
-    max-height: 900px;
+    height: 50vh;
+    min-height: 300px;
+    max-height: 500px;
     display: flex;
     align-items: flex-end;
     overflow: hidden;
@@ -1676,30 +1707,30 @@
   .hero-content {
     position: relative;
     z-index: 10;
-    padding: 0 80px 100px;
-    max-width: 650px;
+    padding: 0 40px 30px;
+    max-width: 550px;
   }
 
   .hero-badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     color: #e50914;
-    font-size: 0.9rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 3px;
-    margin-bottom: 12px;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
   }
 
   .badge-icon {
-    width: 24px;
-    height: 24px;
+    width: 18px;
+    height: 18px;
   }
 
   .hero-title {
-    font-size: 3.5rem;
+    font-size: 1.8rem;
     font-weight: 700;
-    margin: 0 0 16px;
+    margin: 0 0 8px;
     text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
     line-height: 1.1;
   }
@@ -1707,9 +1738,9 @@
   .hero-meta {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
-    font-size: 1rem;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
   }
 
   .hero-year {
@@ -1726,8 +1757,8 @@
   }
 
   .hero-rating svg {
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
   }
 
   .hero-genres {
@@ -1735,12 +1766,12 @@
   }
 
   .hero-description {
-    font-size: 1.1rem;
-    line-height: 1.5;
+    font-size: 0.85rem;
+    line-height: 1.4;
     color: #ddd;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.8);
@@ -1748,17 +1779,17 @@
 
   .hero-buttons {
     display: flex;
-    gap: 16px;
+    gap: 10px;
   }
 
   .btn-play, .btn-info {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 14px 32px;
+    gap: 8px;
+    padding: 8px 20px;
     border: none;
     border-radius: 6px;
-    font-size: 1.1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -1798,8 +1829,8 @@
   }
 
   .btn-play svg, .btn-info svg {
-    width: 28px;
-    height: 28px;
+    width: 20px;
+    height: 20px;
   }
 
   /* Hero background layers for crossfade */
@@ -1827,39 +1858,39 @@
   /* Content */
   .content {
     position: relative;
-    margin-top: 20px;
-    padding-bottom: 60px;
+    margin-top: -10px;
+    padding-bottom: 30px;
     z-index: 10;
   }
 
   /* Search View */
   .search-view, .genre-view, .category-view {
-    padding: 40px 80px;
+    padding: 20px 40px;
   }
 
   .search-header {
-    margin-bottom: 40px;
+    margin-bottom: 20px;
   }
 
   .search-header h1 {
-    font-size: 2rem;
+    font-size: 1.3rem;
     font-weight: 600;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
   }
 
   .search-input-container {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 16px 24px;
+    gap: 12px;
+    padding: 10px 16px;
     background: rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    max-width: 600px;
+    max-width: 500px;
   }
 
   .search-input-container svg {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     color: #888;
     flex-shrink: 0;
   }
@@ -1869,7 +1900,7 @@
     background: none;
     border: none;
     color: #fff;
-    font-size: 1.2rem;
+    font-size: 0.95rem;
     font-family: inherit;
     outline: none;
   }
@@ -2009,44 +2040,44 @@
   }
 
   .results-count {
-    font-size: 1rem;
+    font-size: 0.85rem;
     color: #888;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
   }
 
   .search-genres {
-    margin-top: 40px;
+    margin-top: 20px;
   }
 
   .search-genres h2 {
-    font-size: 1.4rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
   }
 
   .movies-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 24px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 10px;
   }
 
   .curated-tabs {
     display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
+    gap: 8px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
   }
 
   .curated-tab {
-    padding: 12px 24px;
+    padding: 6px 14px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 24px;
+    border-radius: 20px;
     color: #aaa;
-    font-size: 0.95rem;
+    font-size: 0.8rem;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -2077,12 +2108,12 @@
   }
 
   .year-card {
-    padding: 20px 16px;
+    padding: 10px 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     color: #fff;
-    font-size: 1.1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -2106,22 +2137,22 @@
   .loading-spinner {
     display: flex;
     justify-content: center;
-    padding: 60px 0;
+    padding: 30px 0;
   }
 
   .genre-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
   }
 
   .genre-card {
-    padding: 24px 16px;
+    padding: 14px 12px;
     background: linear-gradient(135deg, rgba(229, 9, 20, 0.3), rgba(229, 9, 20, 0.1));
     border: 1px solid rgba(229, 9, 20, 0.3);
     border-radius: 8px;
     color: #fff;
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -2147,12 +2178,12 @@
   .genre-header {
     display: flex;
     align-items: center;
-    gap: 20px;
-    margin-bottom: 32px;
+    gap: 12px;
+    margin-bottom: 16px;
   }
 
   .genre-header h1 {
-    font-size: 2rem;
+    font-size: 1.3rem;
     font-weight: 600;
     margin: 0;
   }
@@ -2186,16 +2217,16 @@
   }
 
   .category-title {
-    font-size: 2rem;
+    font-size: 1.3rem;
     font-weight: 600;
-    margin: 0 0 32px;
+    margin: 0 0 16px;
   }
 
   .favorites-header {
     display: flex;
     align-items: baseline;
-    gap: 16px;
-    margin-bottom: 32px;
+    gap: 12px;
+    margin-bottom: 16px;
   }
 
   .favorites-header .category-title {
@@ -2203,7 +2234,7 @@
   }
 
   .favorites-count {
-    font-size: 1rem;
+    font-size: 0.85rem;
     color: #888;
   }
 
@@ -2212,26 +2243,26 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 80px 40px;
+    padding: 40px 30px;
     text-align: center;
   }
 
   .empty-state svg {
-    width: 80px;
-    height: 80px;
+    width: 50px;
+    height: 50px;
     color: #333;
-    margin-bottom: 24px;
+    margin-bottom: 16px;
   }
 
   .empty-state h2 {
-    font-size: 1.5rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    margin: 0 0 12px;
+    margin: 0 0 8px;
     color: #fff;
   }
 
   .empty-state p {
-    font-size: 1rem;
+    font-size: 0.85rem;
     color: #888;
     margin: 0;
   }
@@ -2278,9 +2309,9 @@
   }
 
   .error-page h2 {
-    font-size: 1.8rem;
+    font-size: 1.3rem;
     font-weight: 600;
-    margin: 0 0 12px;
+    margin: 0 0 8px;
   }
 
   .error-page p {
@@ -2295,12 +2326,12 @@
   }
 
   .btn-retry {
-    padding: 14px 32px;
+    padding: 10px 24px;
     background: #e50914;
     color: #fff;
     border: none;
     border-radius: 6px;
-    font-size: 1.1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -2320,9 +2351,9 @@
   /* Coming soon */
   .coming-soon {
     color: #888;
-    font-size: 1.1rem;
+    font-size: 0.9rem;
     text-align: center;
-    padding: 60px 20px;
+    padding: 30px 20px;
   }
 
   /* Loading/error inline */
@@ -2330,14 +2361,15 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    padding: 60px 20px;
+    gap: 12px;
+    padding: 30px 20px;
     color: #888;
   }
 
   .channels-info {
     color: #888;
-    margin-bottom: 24px;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
   }
 
   /* Live header with toggle */
@@ -2346,9 +2378,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 10px;
   }
 
   .live-header .category-title,
@@ -2367,13 +2399,13 @@
   .toggle-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
+    gap: 6px;
+    padding: 6px 12px;
     background: transparent;
     border: none;
     border-radius: 6px;
     color: #888;
-    font-size: 0.95rem;
+    font-size: 0.8rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -2440,21 +2472,21 @@
   /* Network grid */
   .network-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 16px;
-    margin-top: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
   }
 
   .network-card {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px 16px;
+    padding: 12px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    border-radius: 8px;
     color: #fff;
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -2481,20 +2513,20 @@
   /* Channels grid */
   .channels-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 20px;
-    margin-top: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
   }
 
   .channel-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 20px;
+    gap: 8px;
+    padding: 12px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s ease;
   }
@@ -2641,15 +2673,11 @@
   /* Responsive */
   @media (max-width: 1200px) {
     .hero-content {
-      padding: 0 60px 80px;
-    }
-
-    .hero-title {
-      font-size: 3rem;
+      padding: 0 40px 30px;
     }
 
     .search-view, .genre-view, .category-view {
-      padding: 30px 60px;
+      padding: 20px 40px;
     }
   }
 
@@ -2661,26 +2689,16 @@
     }
 
     .hero-content {
-      padding: 0 40px 60px;
-      max-width: 500px;
+      padding: 0 32px 24px;
+      max-width: 450px;
     }
 
     .hero-title {
-      font-size: 2.5rem;
-    }
-
-    .hero-description {
-      font-size: 1rem;
-      -webkit-line-clamp: 2;
-    }
-
-    .btn-play, .btn-info {
-      padding: 12px 24px;
-      font-size: 1rem;
+      font-size: 1.6rem;
     }
 
     .search-view, .genre-view, .category-view {
-      padding: 24px 40px;
+      padding: 16px 32px;
     }
   }
 
@@ -2690,35 +2708,24 @@
     }
 
     .hero {
-      height: 70vh;
-      min-height: 400px;
+      height: 45vh;
+      min-height: 250px;
     }
 
     .hero-content {
-      padding: 0 24px 50px;
+      padding: 0 20px 20px;
     }
 
     .hero-title {
-      font-size: 2rem;
-    }
-
-    .btn-play, .btn-info {
-      padding: 12px 20px;
-      font-size: 1rem;
-      gap: 8px;
-    }
-
-    .btn-play svg, .btn-info svg {
-      width: 24px;
-      height: 24px;
+      font-size: 1.4rem;
     }
 
     .content {
-      margin-top: 10px;
+      margin-top: 0;
     }
 
     .search-view, .genre-view, .category-view {
-      padding: 20px 24px;
+      padding: 16px 20px;
     }
 
     .genre-grid {
@@ -2728,24 +2735,24 @@
 
   /* Inline Search Styles */
   .search-section {
-    padding: 20px 0;
+    padding: 12px 0;
   }
 
   .inline-search-form {
     display: flex;
-    gap: 12px;
-    max-width: 500px;
-    margin-bottom: 24px;
+    gap: 8px;
+    max-width: 400px;
+    margin-bottom: 12px;
   }
 
   .inline-search-input {
     flex: 1;
-    padding: 12px 16px;
+    padding: 8px 12px;
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
+    border-radius: 6px;
     color: #fff;
-    font-size: 1rem;
+    font-size: 0.85rem;
     transition: all 0.2s ease;
   }
 
@@ -2760,7 +2767,7 @@
   }
 
   .inline-search-btn {
-    padding: 12px 20px;
+    padding: 8px 14px;
     background: #e50914;
     border: none;
     border-radius: 8px;
@@ -2793,14 +2800,14 @@
 
   .search-results-count {
     color: #888;
-    margin-bottom: 16px;
-    font-size: 0.9rem;
+    margin-bottom: 10px;
+    font-size: 0.8rem;
   }
 
   .no-results {
     color: #888;
     text-align: center;
-    padding: 40px 0;
-    font-size: 1.1rem;
+    padding: 20px 0;
+    font-size: 0.9rem;
   }
 </style>

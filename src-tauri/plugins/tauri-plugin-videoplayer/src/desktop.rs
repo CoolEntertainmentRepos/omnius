@@ -20,12 +20,16 @@ impl<R: Runtime> Videoplayer<R> {
     })
   }
 
-  pub fn play_video(&self, payload: PlayVideoRequest) -> crate::Result<()> {
+  pub fn play_video(&self, payload: PlayVideoRequest) -> crate::Result<PlayVideoResponse> {
     println!("[Desktop] Playing video from: {}", payload.path);
-    Ok(())
+    Ok(PlayVideoResponse { last_position: None, duration: None })
   }
 
-  // The signature changes, but the logic doesn't use the payload.
+  pub fn play_live_video(&self, payload: PlayLiveVideoRequest) -> crate::Result<PlayLiveVideoResponse> {
+    println!("[Desktop] Playing live stream: {}", payload.url);
+    Ok(PlayLiveVideoResponse { finished: Some(true) })
+  }
+
   pub fn force_focus(&self, _payload: ForceFocusRequest) -> crate::Result<()> {
       if let Some(window) = self.0.get_webview_window("main") {
           window.set_focus().map_err(Into::into)

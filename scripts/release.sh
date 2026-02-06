@@ -89,10 +89,14 @@ if ! gh auth status &> /dev/null; then
     exit 1
 fi
 
-# Update version in config files
-echo -e "${YELLOW}Updating version to ${VERSION}...${NC}"
-sed -i '' "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/tauri.conf.json"
-sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/Cargo.toml"
+# Update version in config files (skip if already at target version)
+if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+    echo -e "${YELLOW}Updating version to ${VERSION}...${NC}"
+    sed -i '' "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/tauri.conf.json"
+    sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" "$PROJECT_DIR/src-tauri/Cargo.toml"
+else
+    echo -e "${YELLOW}Version already at ${VERSION}, skipping bump${NC}"
+fi
 
 # Create releases directory
 mkdir -p "$RELEASE_DIR"
@@ -105,10 +109,11 @@ echo -e "\n${BLUE}=== Building Android TV APKs ===${NC}"
 
 # Set up Android build environment
 export JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home
-export ANDROID_HOME=~/Library/Android/sdk
-export ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/28.2.13676358
+export ANDROID_HOME=~/Android/sdk
+export ANDROID_NDK_HOME=~/Android/sdk/ndk/27.0.12077973
 export NDK_HOME=$ANDROID_NDK_HOME
 TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64
+BUILD_TOOLS_VERSION=$(ls "$ANDROID_HOME/build-tools/" | sort -V | tail -1)
 export PATH=$TOOLCHAIN/bin:$PATH
 
 # ARM toolchain (32-bit - for older devices like Mi Box)
@@ -137,30 +142,38 @@ fi
 # Build and sign ARM (32-bit)
 echo -e "${YELLOW}Building Android TV (ARM 32-bit)...${NC}"
 cd "$PROJECT_DIR"
-pnpm tauri android build --target armv7 2>&1 | tail -5
+npm run tauri -- android build --target armv7 || echo -e "${RED}ARM build failed${NC}"
 
-APK_ARM="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+APK_ARM="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/arm/release/app-arm-release-unsigned.apk"
 if [ -f "$APK_ARM" ]; then
     SIGNED_ARM="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm.apk"
-    $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
-        --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-        --out "$SIGNED_ARM" "$APK_ARM"
+    $ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/zipalign -f 4 "$APK_ARM" "$APK_ARM.aligned"
+    $ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner sign \
+        --ks "$KEYSTORE" --ks-pass pass:android --ks-key-alias androiddebugkey \
+        --out "$SIGNED_ARM" "$APK_ARM.aligned"
+    rm -f "$APK_ARM.aligned"
     echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm.apk${NC}"
     RELEASE_FILES+=("$SIGNED_ARM")
+else
+    echo -e "${RED}✗ ARM APK not found at $APK_ARM${NC}"
 fi
 
 # Build and sign ARM64 (64-bit)
 echo -e "${YELLOW}Building Android TV (ARM 64-bit)...${NC}"
-pnpm tauri android build --target aarch64 2>&1 | tail -5
+npm run tauri -- android build --target aarch64 || echo -e "${RED}ARM64 build failed${NC}"
 
-APK_ARM64="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+APK_ARM64="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk"
 if [ -f "$APK_ARM64" ]; then
     SIGNED_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm64.apk"
-    $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
-        --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-        --out "$SIGNED_ARM64" "$APK_ARM64"
+    $ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/zipalign -f 4 "$APK_ARM64" "$APK_ARM64.aligned"
+    $ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner sign \
+        --ks "$KEYSTORE" --ks-pass pass:android --ks-key-alias androiddebugkey \
+        --out "$SIGNED_ARM64" "$APK_ARM64.aligned"
+    rm -f "$APK_ARM64.aligned"
     echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm64.apk${NC}"
     RELEASE_FILES+=("$SIGNED_ARM64")
+else
+    echo -e "${RED}✗ ARM64 APK not found at $APK_ARM64${NC}"
 fi
 
 # ============================================
@@ -172,7 +185,7 @@ echo -e "\n${BLUE}=== Building Desktop Apps ===${NC}"
 export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/streamer.key)
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
-GITHUB_REPO_URL="https://github.com/flakerim/Streamer/releases/download/v${VERSION}"
+GITHUB_REPO_URL="https://github.com/CoolEntertainmentRepos/omnius/releases/download/v${VERSION}"
 
 # Manifest platform entries (will be built up as we go)
 DARWIN_AARCH64_ENTRY=""
@@ -180,7 +193,7 @@ DARWIN_X86_64_ENTRY=""
 
 # macOS (Apple Silicon)
 echo -e "${YELLOW}Building macOS (Apple Silicon)...${NC}"
-pnpm tauri build --target aarch64-apple-darwin 2>&1 | tail -5
+npm run tauri -- build --target aarch64-apple-darwin || echo -e "${RED}macOS ARM64 build failed${NC}"
 
 DMG_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
 TARGZ_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -name "*.tar.gz" 2>/dev/null | head -1)
@@ -204,7 +217,7 @@ fi
 
 # macOS (Intel)
 echo -e "${YELLOW}Building macOS (Intel x64)...${NC}"
-pnpm tauri build --target x86_64-apple-darwin 2>&1 | tail -5
+npm run tauri -- build --target x86_64-apple-darwin || echo -e "${RED}macOS x64 build failed${NC}"
 
 DMG_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
 TARGZ_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -name "*.tar.gz" 2>/dev/null | head -1)

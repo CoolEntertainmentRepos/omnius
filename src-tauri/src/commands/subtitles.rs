@@ -28,6 +28,16 @@ pub async fn download_subtitle(
 }
 
 #[tauri::command]
+pub async fn search_subtitles_by_filename(
+    client: State<'_, SubtitleClient>,
+    filename: String,
+    languages: Option<String>,
+) -> Result<SubtitleSearchResult, String> {
+    println!("[search_subtitles_by_filename] Searching for filename: {}, languages: {:?}", filename, languages);
+    client.search_by_filename(&filename, languages.as_deref()).await
+}
+
+#[tauri::command]
 pub async fn get_subtitle_languages() -> Result<Vec<SubtitleLanguage>, String> {
     Ok(vec![
         // Major languages

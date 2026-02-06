@@ -45,6 +45,8 @@ pub struct TorrentFile {
     pub size: u64,
     /// Whether this file is a video file
     pub is_video: bool,
+    /// Whether this file is a subtitle file
+    pub is_subtitle: bool,
 }
 
 /// Common video file extensions
@@ -56,6 +58,15 @@ pub const VIDEO_EXTENSIONS: &[&str] = &[
 pub fn is_video_file(filename: &str) -> bool {
     let lower = filename.to_lowercase();
     VIDEO_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{}", ext)))
+}
+
+/// Common subtitle file extensions
+pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub"];
+
+/// Check if a filename has a subtitle extension
+pub fn is_subtitle_file(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    SUBTITLE_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{}", ext)))
 }
 
 /// Error types for torrent operations

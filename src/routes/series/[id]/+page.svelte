@@ -20,6 +20,8 @@
   let selectedTorrent = $state<EpisodeTorrent | null>(null);
   let isStartingStream = $state(false);
   let streamError = $state<string | null>(null);
+  let showMore = $state(false);
+  let modalBodyEl = $state<HTMLElement | null>(null);
   let unmounted = false;
 
   async function loadSeries(id: number) {
@@ -165,6 +167,33 @@
     }
   });
 
+  function handleModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' || e.key === 'GoBack' || e.key === 'XF86Back' || (e.key === 'Backspace' && !(e.target instanceof HTMLInputElement))) {
+      e.preventDefault();
+      e.stopPropagation();
+      showMore = false;
+      return;
+    }
+    if (modalBodyEl) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        modalBodyEl.scrollBy({ top: 80, behavior: 'smooth' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        modalBodyEl.scrollBy({ top: -80, behavior: 'smooth' });
+      }
+    }
+  }
+
+  $effect(() => {
+    if (showMore && browser) {
+      setTimeout(() => {
+        const closeBtn = document.querySelector('.modal-close') as HTMLElement;
+        if (closeBtn) closeBtn.focus();
+      }, 50);
+    }
+  });
+
   function formatSize(size: string): string {
     return size || "Unknown";
   }
@@ -221,16 +250,97 @@
     </nav>
 
     <main class="content">
-      <!-- Series Info Section -->
       <div class="series-info">
-        <div class="poster-container">
-          <img
-            src={series.poster_image}
-            alt="{series.title} poster"
-            class="poster"
-          />
+        <!-- Left: Season/Episode/Play controls -->
+        <div class="controls-column">
+          <!-- Season Selector -->
+          <div class="season-selector">
+            <div class="season-buttons">
+              {#each Array.from({ length: series.total_seasons }, (_, i) => i + 1) as seasonNum (seasonNum)}
+                <button
+                  class="season-btn"
+                  class:selected={selectedSeason === seasonNum}
+                  onclick={() => selectSeason(seasonNum)}
+                >
+                  S{seasonNum}
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Episode List -->
+          {#if selectedSeason}
+            <div class="episode-selector">
+              {#if episodesLoading}
+                <div class="loading-text">Loading...</div>
+              {:else if episodes.length > 0}
+                <div class="episode-list">
+                  {#each episodes as episode (episode.id)}
+                    <button
+                      class="episode-btn"
+                      class:selected={selectedEpisode?.id === episode.id}
+                      class:has-torrents={episode.torrents && episode.torrents.length > 0}
+                      onclick={() => selectEpisode(episode)}
+                    >
+                      <span class="episode-number">E{String(episode.episode_number).padStart(2, '0')}</span>
+                      <span class="episode-title">{episode.title}</span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <p class="no-episodes">No episodes found.</p>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Quality + Play for selected episode -->
+          {#if selectedEpisode && selectedEpisode.torrents && selectedEpisode.torrents.length > 0}
+            <div class="quality-section">
+              <div class="quality-options">
+                {#each selectedEpisode.torrents as torrent (torrent.id)}
+                  <button
+                    class="quality-btn"
+                    class:selected={selectedTorrent?.id === torrent.id}
+                    class:no-seeds={torrent.seeds === 0}
+                    onclick={() => selectTorrent(torrent)}
+                  >
+                    <span class="quality-label">{torrent.quality}</span>
+                    <span class="quality-meta">{formatSize(torrent.size)} &middot; {torrent.seeds} seeds</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <button
+              class="play-btn"
+              onclick={handlePlay}
+              disabled={!selectedTorrent || isStartingStream}
+            >
+              {#if isStartingStream}
+                <div class="btn-spinner"></div>
+                Starting...
+              {:else}
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                Play {selectedTorrent?.quality || ""}
+              {/if}
+            </button>
+          {:else if selectedEpisode}
+            <div class="no-sources-inline">No sources available</div>
+          {/if}
+
+          {#if streamError}
+            <div class="stream-error">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+              </svg>
+              {streamError}
+            </div>
+          {/if}
         </div>
 
+        <!-- Right: Info -->
         <div class="info">
           <h1 class="title">{series.title}</h1>
 
@@ -247,7 +357,6 @@
             {/if}
           </div>
 
-          <!-- Ratings Row -->
           {#if series.rating && series.rating > 0}
             <div class="ratings-row">
               <span class="rating-badge imdb">
@@ -256,7 +365,7 @@
               </span>
               {#if series.rotten_tomatoes}
                 <span class="rating-badge rt">
-                  <span class="rating-label">🍅 Rotten</span>
+                  <span class="rating-label">RT</span>
                   <span class="rating-value">{series.rotten_tomatoes}%</span>
                 </span>
               {/if}
@@ -271,134 +380,65 @@
             </div>
           {/if}
 
-          <p class="description">
+          <p class="description truncated">
             {series.summary || "No description available."}
           </p>
 
-          <!-- Season Selector -->
-          <div class="season-selector">
-            <h3>Select Season</h3>
-            <div class="season-buttons">
-              {#each Array.from({ length: series.total_seasons }, (_, i) => i + 1) as seasonNum (seasonNum)}
-                <button
-                  class="season-btn"
-                  class:selected={selectedSeason === seasonNum}
-                  onclick={() => selectSeason(seasonNum)}
-                >
-                  Season {seasonNum}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <!-- Episode Selector -->
-          {#if selectedSeason}
-            <div class="episode-selector">
-              <h3>Episodes {#if episodesLoading}<span class="loading-text">Loading...</span>{/if}</h3>
-              {#if episodes.length > 0}
-                <div class="episode-list">
-                  {#each episodes as episode (episode.id)}
-                    <button
-                      class="episode-btn"
-                      class:selected={selectedEpisode?.id === episode.id}
-                      class:has-torrents={episode.torrents && episode.torrents.length > 0}
-                      onclick={() => selectEpisode(episode)}
-                    >
-                      <span class="episode-number">E{String(episode.episode_number).padStart(2, '0')}</span>
-                      <span class="episode-title">{episode.title}</span>
-                      {#if episode.torrents && episode.torrents.length > 0}
-                        <span class="episode-sources">{episode.torrents.length}</span>
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-              {:else if !episodesLoading}
-                <p class="no-episodes">No episodes found for this season.</p>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Selected Episode Details & Torrent Selection -->
+          <!-- Selected episode inline preview -->
           {#if selectedEpisode}
-            <div class="selected-episode">
-              <div class="episode-info">
-                <span class="episode-tag">
-                  S{String(selectedEpisode.season_number).padStart(2, '0')}E{String(selectedEpisode.episode_number).padStart(2, '0')}
-                </span>
-                <h4>{selectedEpisode.title}</h4>
-                {#if selectedEpisode.air_date}
-                  <span class="episode-date">{selectedEpisode.air_date}</span>
-                {/if}
-              </div>
-
-              {#if selectedEpisode.summary}
-                <p class="episode-summary">{selectedEpisode.summary}</p>
-              {/if}
-
-              {#if selectedEpisode.torrents && selectedEpisode.torrents.length > 0}
-                <div class="quality-section">
-                  <h3>Select Quality</h3>
-                  <div class="quality-options">
-                    {#each selectedEpisode.torrents as torrent (torrent.id)}
-                      <button
-                        class="quality-btn"
-                        class:selected={selectedTorrent?.id === torrent.id}
-                        class:no-seeds={torrent.seeds === 0}
-                        onclick={() => selectTorrent(torrent)}
-                      >
-                        <span class="quality-label">{torrent.quality}</span>
-                        <span class="quality-size">{formatSize(torrent.size)}</span>
-                        <span class="quality-seeds" class:warning={torrent.seeds === 0}>
-                          <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
-                          </svg>
-                          {torrent.seeds}
-                        </span>
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-
-                <!-- Play Button -->
-                <div class="play-section">
-                  <button
-                    class="play-btn"
-                    onclick={handlePlay}
-                    disabled={!selectedTorrent || isStartingStream}
-                  >
-                    {#if isStartingStream}
-                      <div class="btn-spinner"></div>
-                      Starting...
-                    {:else}
-                      <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z"/>
-                      </svg>
-                      Play {selectedTorrent?.quality || ""}
-                    {/if}
-                  </button>
-                </div>
-
-                {#if streamError}
-                  <div class="stream-error">
-                    <svg viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                    </svg>
-                    {streamError}
-                  </div>
-                {/if}
-              {:else}
-                <div class="no-sources">
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                  </svg>
-                  <span>No sources available for this episode</span>
-                </div>
+            <div class="episode-preview">
+              <span class="episode-tag">
+                S{String(selectedEpisode.season_number).padStart(2, '0')}E{String(selectedEpisode.episode_number).padStart(2, '0')}
+              </span>
+              <span class="episode-preview-title">{selectedEpisode.title}</span>
+              {#if selectedEpisode.air_date}
+                <span class="episode-preview-date">{selectedEpisode.air_date}</span>
               {/if}
             </div>
           {/if}
+
+          <button class="more-btn" onclick={() => showMore = !showMore}>
+            More Info
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/>
+            </svg>
+          </button>
         </div>
       </div>
     </main>
+
+    <!-- More Info Modal -->
+    {#if showMore && series}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="modal-overlay" onclick={() => showMore = false} onkeydown={handleModalKeydown}>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h2>{series.title}</h2>
+            <button class="modal-close" onclick={() => showMore = false}>
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+          <div class="modal-body" bind:this={modalBodyEl}>
+            <p class="modal-description">{series.summary || ""}</p>
+
+            {#if selectedEpisode}
+              <div class="modal-episode">
+                <h3>
+                  S{String(selectedEpisode.season_number).padStart(2, '0')}E{String(selectedEpisode.episode_number).padStart(2, '0')} - {selectedEpisode.title}
+                </h3>
+                {#if selectedEpisode.air_date}
+                  <span class="modal-episode-date">{selectedEpisode.air_date}</span>
+                {/if}
+                {#if selectedEpisode.summary}
+                  <p class="modal-episode-summary">{selectedEpisode.summary}</p>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -441,12 +481,12 @@
   .nav {
     position: relative;
     z-index: 10;
-    padding: 30px 50px;
+    padding: 12px 32px;
   }
 
   .back-btn {
-    width: 50px;
-    height: 50px;
+    width: 44px;
+    height: 44px;
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 50%;
@@ -465,45 +505,286 @@
 
   .back-btn:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
   }
 
   .back-btn svg {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
   }
 
   .content {
     position: relative;
     z-index: 10;
-    padding: 0 50px 60px;
+    padding: 0 32px 24px;
   }
 
   .series-info {
     display: flex;
-    gap: 50px;
-    margin-bottom: 60px;
+    gap: 24px;
   }
 
-  .poster-container {
+  /* Left column: controls */
+  .controls-column {
+    flex-shrink: 0;
+    width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Season selector */
+  .season-selector {
+    margin-bottom: 4px;
+  }
+
+  .season-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .season-btn {
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .season-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .season-btn:focus {
+    outline: none;
+    border-color: #e50914;
+    box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.5);
+  }
+
+  .season-btn.selected {
+    background: rgba(229, 9, 20, 0.15);
+    border-color: #e50914;
+    color: #e50914;
+  }
+
+  /* Episode list */
+  .episode-selector {
+    margin-bottom: 4px;
+  }
+
+  .loading-text {
+    font-size: 0.8rem;
+    color: #888;
+  }
+
+  .episode-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .episode-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.8rem;
+    text-align: left;
+  }
+
+  .episode-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .episode-btn:focus {
+    outline: none;
+    border-color: #e50914;
+  }
+
+  .episode-btn.selected {
+    background: rgba(229, 9, 20, 0.12);
+    border-color: #e50914;
+    color: #fff;
+  }
+
+  .episode-btn:not(.has-torrents) {
+    opacity: 0.4;
+  }
+
+  .episode-number {
+    font-weight: 700;
+    color: #e50914;
+    min-width: 28px;
+    font-size: 0.75rem;
+  }
+
+  .episode-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .no-episodes {
+    color: #666;
+    font-size: 0.8rem;
+    margin: 0;
+  }
+
+  /* Quality section */
+  .quality-section {
+    margin-top: 4px;
+  }
+
+  .quality-options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .quality-btn {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+    font-size: 0.85rem;
+  }
+
+  .quality-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .quality-btn:focus {
+    outline: none;
+    border-color: #e50914;
+    box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.5);
+  }
+
+  .quality-btn.selected {
+    background: rgba(229, 9, 20, 0.15);
+    border-color: #e50914;
+  }
+
+  .quality-btn.no-seeds {
+    opacity: 0.4;
+  }
+
+  .quality-label {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .quality-meta {
+    font-size: 0.75rem;
+    color: #888;
+  }
+
+  /* Play button */
+  .play-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    background: #e50914;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .play-btn:hover:not(:disabled) {
+    background: #f40612;
+  }
+
+  .play-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px #fff, 0 0 0 7px #e50914;
+    transform: scale(1.02);
+  }
+
+  .play-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .play-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .btn-spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .no-sources-inline {
+    font-size: 0.8rem;
+    color: #666;
+    text-align: center;
+    padding: 8px;
+  }
+
+  .stream-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(220, 38, 38, 0.15);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 6px;
+    color: #ef4444;
+    font-size: 0.8rem;
+  }
+
+  .stream-error svg {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
-  .poster {
-    width: 300px;
-    border-radius: 12px;
-    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
-  }
-
+  /* Right column: info */
   .info {
     flex: 1;
-    max-width: 900px;
+    max-width: 800px;
   }
 
   .title {
-    font-size: 3rem;
+    font-size: 1.6rem;
     font-weight: 700;
-    margin: 0 0 20px;
+    margin: 0 0 6px;
     line-height: 1.1;
   }
 
@@ -511,16 +792,16 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
-    font-size: 1.1rem;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
     color: #aaa;
   }
 
   .status-badge {
-    padding: 4px 12px;
+    padding: 2px 8px;
     border-radius: 4px;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -537,407 +818,226 @@
   }
 
   .network {
-    color: #2ecc71;
+    color: #e50914;
   }
 
-  /* Ratings Row */
+  /* Ratings */
   .ratings-row {
     display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-bottom: 20px;
+    gap: 8px;
+    margin-bottom: 10px;
   }
 
   .rating-badge {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    padding: 12px 20px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    min-width: 90px;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
   }
 
   .rating-badge .rating-label {
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     color: #888;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
   }
 
   .rating-badge .rating-value {
-    font-size: 1.4rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: #fff;
   }
 
-  .rating-badge.imdb .rating-value {
-    color: #f5c518;
-  }
+  .rating-badge.imdb .rating-value { color: #f5c518; }
+  .rating-badge.rt .rating-value { color: #fa320a; }
 
-  .rating-badge.rt .rating-value {
-    color: #fa320a;
-  }
-
+  /* Genres */
   .genres {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 6px;
+    margin-bottom: 8px;
   }
 
   .genre-tag {
-    padding: 8px 16px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 20px;
-    font-size: 0.95rem;
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    font-size: 0.75rem;
+    color: #ccc;
   }
 
+  /* Description */
   .description {
-    font-size: 1.1rem;
-    line-height: 1.7;
+    font-size: 0.85rem;
+    line-height: 1.5;
     color: #999;
-    margin: 0 0 30px;
+    margin: 0 0 6px;
   }
 
-  /* Season Selector */
-  .season-selector {
-    margin-bottom: 24px;
+  .description.truncated {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
-  .season-selector h3,
-  .episode-selector h3,
-  .quality-section h3 {
-    font-size: 1.2rem;
-    font-weight: 600;
-    margin: 0 0 12px;
-    color: #fff;
-  }
-
-  .loading-text {
-    font-size: 0.9rem;
-    color: #888;
-    font-weight: 400;
-    margin-left: 8px;
-  }
-
-  .season-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .season-btn {
-    padding: 12px 20px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: #fff;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 1rem;
-    font-weight: 500;
-  }
-
-  .season-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
-  }
-
-  .season-btn:focus {
-    outline: none;
-    border-color: #2ecc71;
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.3);
-  }
-
-  .season-btn.selected {
-    background: rgba(46, 204, 113, 0.15);
-    border-color: #2ecc71;
-    color: #2ecc71;
-  }
-
-  /* Episode Selector */
-  .episode-selector {
-    margin-bottom: 24px;
-  }
-
-  .episode-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    max-height: 200px;
-    overflow-y: auto;
-    padding-right: 8px;
-  }
-
-  .episode-btn {
+  /* Episode preview inline */
+  .episode-preview {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid transparent;
-    border-radius: 8px;
-    color: #ccc;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 0.95rem;
-  }
-
-  .episode-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .episode-btn:focus {
-    outline: none;
-    border-color: #2ecc71;
-  }
-
-  .episode-btn.selected {
-    background: rgba(46, 204, 113, 0.15);
-    border-color: #2ecc71;
-    color: #fff;
-  }
-
-  .episode-btn:not(.has-torrents) {
-    opacity: 0.4;
-  }
-
-  .episode-number {
-    font-weight: 700;
-    color: #2ecc71;
-    min-width: 36px;
-  }
-
-  .episode-title {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 180px;
-  }
-
-  .episode-sources {
-    background: rgba(46, 204, 113, 0.2);
-    color: #2ecc71;
-    padding: 2px 8px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .no-episodes {
-    color: #666;
-    font-size: 0.95rem;
-  }
-
-  /* Selected Episode */
-  .selected-episode {
-    padding: 24px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 12px;
-    margin-bottom: 24px;
-  }
-
-  .episode-info {
-    margin-bottom: 16px;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
   }
 
   .episode-tag {
     display: inline-block;
-    background: #2ecc71;
+    background: #e50914;
     color: #fff;
-    padding: 4px 10px;
+    padding: 2px 8px;
     border-radius: 4px;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 700;
-    margin-bottom: 10px;
   }
 
-  .episode-info h4 {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin: 0 0 6px;
+  .episode-preview-title {
     color: #fff;
+    font-weight: 500;
   }
 
-  .episode-date {
-    font-size: 0.9rem;
-    color: #888;
+  .episode-preview-date {
+    color: #666;
+    font-size: 0.8rem;
   }
 
-  .episode-summary {
-    font-size: 0.95rem;
-    line-height: 1.6;
-    color: #999;
-    margin: 0 0 20px;
-  }
-
-  /* Quality Section */
-  .quality-section {
-    margin-bottom: 24px;
-  }
-
-  .quality-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .quality-btn {
-    display: flex;
-    flex-direction: column;
+  /* More button */
+  .more-btn {
+    display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 14px 20px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    color: #fff;
+    padding: 4px 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #ccc;
+    font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s ease;
-    min-width: 100px;
   }
 
-  .quality-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
+  .more-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
   }
 
-  .quality-btn:focus {
+  .more-btn:focus {
     outline: none;
-    border-color: #2ecc71;
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.3);
+    border-color: #e50914;
+    box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.5);
   }
 
-  .quality-btn.selected {
-    background: rgba(46, 204, 113, 0.15);
-    border-color: #2ecc71;
+  .more-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
-  .quality-btn.no-seeds {
-    opacity: 0.5;
-  }
-
-  .quality-label {
-    font-size: 1.3rem;
-    font-weight: 700;
-  }
-
-  .quality-size {
-    font-size: 0.9rem;
-    color: #888;
-  }
-
-  .quality-seeds {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.85rem;
-    color: #2ecc71;
-  }
-
-  .quality-seeds.warning {
-    color: #e74c3c;
-  }
-
-  .quality-seeds svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  /* Play Section */
-  .play-section {
-    display: flex;
-    gap: 16px;
-  }
-
-  .play-btn {
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.85);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    padding: 18px 48px;
-    background: #2ecc71;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
+  }
+
+  .modal-content {
+    background: #1a1a1a;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 700px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    padding: 24px 24px 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+  }
+
+  .modal-body {
+    overflow-y: auto;
+    flex: 1;
+    padding-bottom: 24px;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .modal-header h2 {
     font-size: 1.3rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    font-weight: 700;
+    margin: 0;
+    color: #fff;
   }
 
-  .play-btn:hover:not(:disabled) {
-    background: #27ae60;
-    transform: scale(1.02);
-  }
-
-  .play-btn:focus {
-    outline: none;
-    box-shadow: 0 0 0 5px #fff, 0 0 0 8px #2ecc71;
-    transform: scale(1.05);
-  }
-
-  .play-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .play-btn svg {
-    width: 28px;
-    height: 28px;
-  }
-
-  .btn-spinner {
-    width: 24px;
-    height: 24px;
-    border: 3px solid rgba(255, 255, 255, 0.3);
-    border-top-color: #fff;
+  .modal-close {
+    width: 36px;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .stream-error {
+    color: #aaa;
+    cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 14px 20px;
-    background: rgba(220, 38, 38, 0.15);
-    border: 1px solid rgba(220, 38, 38, 0.3);
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .modal-close:hover { background: rgba(255, 255, 255, 0.2); color: #fff; }
+  .modal-close:focus { outline: none; box-shadow: 0 0 0 2px #e50914; }
+  .modal-close svg { width: 20px; height: 20px; }
+
+  .modal-description {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #999;
+    margin: 0 0 16px;
+  }
+
+  .modal-episode {
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.04);
     border-radius: 8px;
-    color: #ef4444;
+  }
+
+  .modal-episode h3 {
     font-size: 1rem;
-    margin-top: 16px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    color: #fff;
   }
 
-  .stream-error svg {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-  }
-
-  .no-sources {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 24px;
+  .modal-episode-date {
+    font-size: 0.8rem;
     color: #666;
   }
 
-  .no-sources svg {
-    width: 24px;
-    height: 24px;
+  .modal-episode-summary {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #999;
+    margin: 8px 0 0;
   }
 
-  /* Loading & Error states */
+  /* Loading / Error */
   .loading-container,
   .error-container {
     position: relative;
@@ -951,22 +1051,22 @@
   }
 
   .spinner {
-    width: 60px;
-    height: 60px;
-    border: 4px solid rgba(46, 204, 113, 0.2);
-    border-top-color: #2ecc71;
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(229, 9, 20, 0.2);
+    border-top-color: #e50914;
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
 
   .error-container > svg {
-    width: 80px;
-    height: 80px;
-    color: #2ecc71;
+    width: 60px;
+    height: 60px;
+    color: #e50914;
   }
 
   .error-container p {
-    font-size: 1.3rem;
+    font-size: 1.1rem;
     color: #888;
     margin: 0;
   }
@@ -974,7 +1074,7 @@
   .error-buttons {
     display: flex;
     gap: 12px;
-    margin-top: 20px;
+    margin-top: 16px;
   }
 
   .back-button,
@@ -983,9 +1083,9 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 14px 32px;
+    padding: 12px 24px;
     border-radius: 8px;
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -999,7 +1099,6 @@
 
   .back-button:hover {
     background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.5);
   }
 
   .back-button svg {
@@ -1008,96 +1107,19 @@
   }
 
   .retry-button {
-    background: #2ecc71;
-    border: 2px solid #2ecc71;
+    background: #e50914;
+    border: 2px solid #e50914;
     color: #fff;
   }
 
   .retry-button:hover {
-    background: #27ae60;
-    border-color: #27ae60;
+    background: #f40612;
   }
 
-  /* Responsive */
-  @media (max-width: 1024px) {
-    .nav {
-      padding: 24px 30px;
-    }
-
-    .content {
-      padding: 0 30px 50px;
-    }
-
-    .series-info {
-      gap: 30px;
-    }
-
-    .poster {
-      width: 250px;
-    }
-
-    .title {
-      font-size: 2.4rem;
-    }
-  }
-
+  /* No column-breaking media queries for TV */
   @media (max-width: 768px) {
-    .nav {
-      padding: 20px;
-    }
-
-    .content {
-      padding: 0 20px 40px;
-    }
-
-    .series-info {
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-    }
-
-    .poster {
-      width: 200px;
-    }
-
-    .info {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .title {
-      font-size: 2rem;
-    }
-
-    .meta {
-      justify-content: center;
-    }
-
-    .genres {
-      justify-content: center;
-    }
-
-    .season-buttons {
-      justify-content: center;
-    }
-
-    .episode-list {
-      justify-content: center;
-    }
-
-    .quality-options {
-      justify-content: center;
-    }
-
-    .play-section {
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .play-btn {
-      width: 100%;
-      max-width: 300px;
-    }
+    .nav { padding: 12px 16px; }
+    .content { padding: 0 16px 24px; }
+    .title { font-size: 1.4rem; }
   }
 </style>

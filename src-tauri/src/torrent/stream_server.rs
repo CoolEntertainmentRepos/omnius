@@ -260,6 +260,12 @@ fn get_content_type(filename: &str) -> &'static str {
         "video/mpeg"
     } else if lower.ends_with(".3gp") {
         "video/3gpp"
+    } else if lower.ends_with(".srt") {
+        "application/x-subrip"
+    } else if lower.ends_with(".vtt") {
+        "text/vtt"
+    } else if lower.ends_with(".ass") || lower.ends_with(".ssa") {
+        "text/x-ssa"
     } else {
         "application/octet-stream"
     }

@@ -52,6 +52,10 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    aaptOptions {
+        // SvelteKit outputs to _app/ which AAPT ignores by default (underscore prefix)
+        ignoreAssetsPattern = ""
+    }
 }
 
 rust {

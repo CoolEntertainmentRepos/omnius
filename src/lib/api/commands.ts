@@ -413,6 +413,30 @@ export async function serveSubtitle(downloadUrl: string): Promise<string> {
 }
 
 /**
+ * Torrent file info (from torrent manager)
+ */
+export interface TorrentFile {
+  name: string;
+  length: number;
+  index: number;
+  is_subtitle: boolean;
+}
+
+/**
+ * List files in a torrent (used to find embedded subtitles)
+ */
+export async function listTorrentFiles(infoHash: string): Promise<TorrentFile[]> {
+  return await invoke<TorrentFile[]>("list_torrent_files", { infoHash });
+}
+
+/**
+ * Search subtitles by release/file name for better sync matching
+ */
+export async function searchSubtitlesByFilename(filename: string, languages?: string): Promise<SubtitleSearchResult> {
+  return await invoke<SubtitleSearchResult>("search_subtitles_by_filename", { filename, languages });
+}
+
+/**
  * Storage info type
  */
 export interface StorageInfo {

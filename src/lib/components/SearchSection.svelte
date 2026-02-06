@@ -296,7 +296,7 @@
 
   function playChannel(channel: Channel) {
     if (channel.stream_url) {
-      goto(`/player/live?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}`);
+      goto(`/live?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}`);
     }
   }
 

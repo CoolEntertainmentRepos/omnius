@@ -56,13 +56,13 @@
 
 <style>
   .top10-section {
-    margin-bottom: 40px;
+    margin-bottom: 20px;
   }
 
   .section-title {
-    font-size: 1.4rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    margin: 0 0 16px 60px;
+    margin: 0 0 8px 40px;
     color: #fff;
   }
 
@@ -71,7 +71,7 @@
     overflow-y: visible;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    padding: 20px 0;
+    padding: 8px 0;
   }
 
   .top10-scroll::-webkit-scrollbar {

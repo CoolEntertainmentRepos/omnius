@@ -16,14 +16,22 @@ pub(crate) async fn ping<R: Runtime>(
 pub(crate) async fn play_video<R: Runtime>(
     app: AppHandle<R>,
     payload: PlayVideoRequest,
-) -> Result<()> {
+) -> Result<PlayVideoResponse> {
     app.videoplayer().play_video(payload)
+}
+
+#[command]
+pub(crate) async fn play_live_video<R: Runtime>(
+    app: AppHandle<R>,
+    payload: PlayLiveVideoRequest,
+) -> Result<PlayLiveVideoResponse> {
+    app.videoplayer().play_live_video(payload)
 }
 
 #[command]
 pub(crate) async fn force_focus<R: Runtime>(
     app: AppHandle<R>,
-    payload: ForceFocusRequest, // <-- Change this
+    payload: ForceFocusRequest,
 ) -> Result<()> {
-    app.videoplayer().force_focus(payload) // <-- Pass the payload
+    app.videoplayer().force_focus(payload)
 }

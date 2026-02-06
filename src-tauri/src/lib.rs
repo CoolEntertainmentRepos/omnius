@@ -11,9 +11,9 @@ mod yts;
 
 use commands::{
     get_movie_details, get_movie_rating, get_movie_suggestions, list_movies, start_stream,
-    get_stream_status, stop_stream, check_stream_ready, serve_subtitle,
+    get_stream_status, stop_stream, check_stream_ready, serve_subtitle, list_torrent_files,
     check_for_updates, get_app_version, search_subtitles,
-    get_subtitle_languages, download_subtitle, get_storage_info, clear_cache, get_download_path,
+    get_subtitle_languages, download_subtitle, search_subtitles_by_filename, get_storage_info, clear_cache, get_download_path,
     // Local API commands
     list_movies_local, get_movie_details_local, get_movie_suggestions_local,
     TorrentManagerState,
@@ -103,11 +103,13 @@ pub fn run() {
             check_for_updates,
             get_app_version,
             search_subtitles,
+            search_subtitles_by_filename,
             get_subtitle_languages,
             download_subtitle,
             get_storage_info,
             clear_cache,
             get_download_path,
+            list_torrent_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

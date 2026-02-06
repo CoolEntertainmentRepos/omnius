@@ -78,14 +78,14 @@
 
 <style>
   .series-row {
-    margin-bottom: 50px;
+    margin-bottom: 20px;
   }
 
   .row-title {
-    font-size: 1.6rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    margin: 0 0 20px;
-    padding: 0 80px;
+    margin: 0 0 8px;
+    padding: 0 40px;
     color: #fff;
   }
 
@@ -95,10 +95,10 @@
 
   .series-scroll {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     overflow-x: auto;
     scroll-behavior: smooth;
-    padding: 20px 80px 30px;
+    padding: 8px 40px 12px;
     scrollbar-width: none;
   }
 
@@ -180,37 +180,12 @@
 
   @media (max-width: 1200px) {
     .row-title {
-      padding: 0 60px;
-      font-size: 1.4rem;
-    }
-
-    .series-scroll {
-      padding: 10px 60px 24px;
-    }
-
-    .scroll-btn {
-      width: 60px;
-    }
-
-    .scroll-btn svg {
-      width: 40px;
-      height: 40px;
-    }
-
-    .series-card-skeleton {
-      width: 180px;
-    }
-  }
-
-  @media (max-width: 900px) {
-    .row-title {
       padding: 0 40px;
-      font-size: 1.3rem;
+      font-size: 1rem;
     }
 
     .series-scroll {
-      padding: 8px 40px 20px;
-      gap: 10px;
+      padding: 8px 40px 12px;
     }
 
     .scroll-btn {
@@ -218,32 +193,45 @@
     }
 
     .scroll-btn svg {
-      width: 32px;
-      height: 32px;
+      width: 36px;
+      height: 36px;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .row-title {
+      padding: 0 32px;
+      font-size: 0.95rem;
     }
 
-    .series-card-skeleton {
-      width: 160px;
+    .series-scroll {
+      padding: 6px 32px 10px;
+      gap: 8px;
+    }
+
+    .scroll-btn {
+      width: 40px;
+    }
+
+    .scroll-btn svg {
+      width: 28px;
+      height: 28px;
     }
   }
 
   @media (max-width: 600px) {
     .row-title {
-      padding: 0 24px;
-      font-size: 1.2rem;
+      padding: 0 20px;
+      font-size: 0.9rem;
     }
 
     .series-scroll {
-      padding: 8px 24px 16px;
-      gap: 10px;
+      padding: 6px 20px 10px;
+      gap: 8px;
     }
 
     .scroll-btn {
       display: none;
-    }
-
-    .series-card-skeleton {
-      width: 140px;
     }
   }
 </style>

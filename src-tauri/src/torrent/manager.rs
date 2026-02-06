@@ -8,7 +8,7 @@ use librqbit::{
 use tokio::sync::RwLock;
 
 use super::stream_server::StreamServer;
-use super::types::{is_video_file, StreamInfo, StreamStats, TorrentError, TorrentFile};
+use super::types::{is_video_file, is_subtitle_file, StreamInfo, StreamStats, TorrentError, TorrentFile};
 
 type ManagedTorrentHandle = Arc<ManagedTorrent>;
 
@@ -190,6 +190,7 @@ impl TorrentManager {
                         name: filename.clone(),
                         size: file_info.len,
                         is_video: is_video_file(&filename),
+                        is_subtitle: is_subtitle_file(&filename),
                     }
                 })
             })
@@ -217,6 +218,7 @@ impl TorrentManager {
                             name: filename,
                             size: file_info.len,
                             is_video: true,
+                            is_subtitle: false,
                         };
 
                         largest_video = match largest_video {
@@ -286,7 +288,6 @@ impl TorrentManager {
     }
 
     /// List all files in a torrent
-    #[allow(dead_code)]
     pub async fn list_files(&self, info_hash: &str) -> Result<Vec<TorrentFile>, String> {
         let torrents = self.active_torrents.read().await;
         let torrent = torrents
@@ -307,6 +308,7 @@ impl TorrentManager {
                             name: filename.clone(),
                             size: file_info.len,
                             is_video: is_video_file(&filename),
+                            is_subtitle: is_subtitle_file(&filename),
                         }
                     })
                     .collect::<Vec<_>>()

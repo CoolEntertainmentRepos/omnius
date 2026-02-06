@@ -126,9 +126,9 @@ export function makeFocusable() {
 
 export function setInitialFocus(selector: string, delay = 100): void {
   setTimeout(() => {
-    const el = document.querySelector(selector) as HTMLElement;
-    if (el) {
-      el.focus();
+    if (SpatialNavigation) {
+      SpatialNavigation.makeFocusable();
+      SpatialNavigation.focus(selector);
     }
   }, delay);
 }

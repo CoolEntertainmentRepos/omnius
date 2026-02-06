@@ -129,3 +129,15 @@ fn md5_hash(input: &str) -> u64 {
     input.hash(&mut hasher);
     hasher.finish()
 }
+
+/// List all files in a torrent (for finding embedded subtitles)
+#[tauri::command]
+pub async fn list_torrent_files(
+    manager: State<'_, TorrentManagerState>,
+    info_hash: String,
+) -> Result<Vec<crate::torrent::TorrentFile>, String> {
+    println!("[list_torrent_files] Listing files for: {}", info_hash);
+    let guard = manager.read().await;
+    let manager = guard.as_ref().ok_or("TorrentManager not initialized")?;
+    manager.list_files(&info_hash).await
+}

@@ -208,7 +208,9 @@
 
   function playChannel(channel: Channel) {
     if (channel.stream_url) {
-      goto(`/live?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}`);
+      const chIdx = channelResults.indexOf(channel);
+      sessionStorage.setItem('liveChannelList', JSON.stringify(channelResults.map(ch => ({ name: ch.name, url: ch.stream_url }))));
+      goto(`/live/play?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}&chIdx=${chIdx}`);
     }
   }
 

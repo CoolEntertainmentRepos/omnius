@@ -27,7 +27,7 @@
 
   function handleClick(notification: Notification) {
     if (notification.movieId) {
-      goto(`/movie/${notification.movieId}`);
+      goto(`/movies/${notification.movieId}`);
     }
     dismiss(notification.id);
   }

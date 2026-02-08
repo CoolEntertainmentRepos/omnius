@@ -1,8 +1,9 @@
 // Svelte 5 store for favorites/watchlist
 import { browser } from "$app/environment";
-import type { Movie, MovieDetails, Channel } from "$lib/api/types";
+import type { Movie, MovieDetails, Series, Channel } from "$lib/api/types";
 
 const STORAGE_KEY = "streamer_favorites";
+const SERIES_KEY = "streamer_fav_series";
 const CHANNELS_KEY = "streamer_fav_channels";
 const COUNTRIES_KEY = "streamer_fav_countries";
 
@@ -17,6 +18,7 @@ export interface FavoriteCountry {
 
 class FavoritesStore {
   favorites = $state<Movie[]>([]);
+  favoriteSeries = $state<Series[]>([]);
   favoriteChannels = $state<Channel[]>([]);
   favoriteCountries = $state<FavoriteCountry[]>([]);
 
@@ -35,6 +37,16 @@ class FavoritesStore {
     } catch (err) {
       console.error("Failed to load favorites:", err);
       this.favorites = [];
+    }
+
+    try {
+      const storedSeries = localStorage.getItem(SERIES_KEY);
+      if (storedSeries) {
+        this.favoriteSeries = JSON.parse(storedSeries);
+      }
+    } catch (err) {
+      console.error("Failed to load favorite series:", err);
+      this.favoriteSeries = [];
     }
 
     try {
@@ -63,6 +75,14 @@ class FavoritesStore {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.favorites));
     } catch (err) {
       console.error("Failed to save favorites:", err);
+    }
+  }
+
+  private saveSeries() {
+    try {
+      localStorage.setItem(SERIES_KEY, JSON.stringify(this.favoriteSeries));
+    } catch (err) {
+      console.error("Failed to save favorite series:", err);
     }
   }
 
@@ -139,6 +159,35 @@ class FavoritesStore {
     return this.favorites.length;
   }
 
+  // Series favorites
+  addSeries(s: Series) {
+    if (!this.isSeriesFavorite(s.id)) {
+      this.favoriteSeries = [...this.favoriteSeries, { ...s }];
+      this.saveSeries();
+    }
+  }
+
+  removeSeries(seriesId: number) {
+    this.favoriteSeries = this.favoriteSeries.filter((s) => s.id !== seriesId);
+    this.saveSeries();
+  }
+
+  toggleSeries(s: Series) {
+    if (this.isSeriesFavorite(s.id)) {
+      this.removeSeries(s.id);
+    } else {
+      this.addSeries(s);
+    }
+  }
+
+  isSeriesFavorite(seriesId: number): boolean {
+    return this.favoriteSeries.some((s) => s.id === seriesId);
+  }
+
+  get seriesCount() {
+    return this.favoriteSeries.length;
+  }
+
   // Channel favorites
   addChannel(ch: Channel) {
     if (!this.isChannelFavorite(ch.id)) {
@@ -198,7 +247,7 @@ class FavoritesStore {
   }
 
   get totalCount() {
-    return this.favorites.length + this.favoriteChannels.length + this.favoriteCountries.length;
+    return this.favorites.length + this.favoriteSeries.length + this.favoriteChannels.length + this.favoriteCountries.length;
   }
 }
 

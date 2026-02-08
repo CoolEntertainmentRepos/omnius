@@ -18,27 +18,23 @@ class StreamStore {
   }
 
   get progressPercent() {
-    return this.stats?.progress_percent ?? 0;
+    return this.stats?.progress ?? 0;
   }
 
   get downloadSpeed() {
     return this.stats ? this.formatSpeed(this.stats.download_speed) : "0 B/s";
   }
 
-  get uploadSpeed() {
-    return this.stats ? this.formatSpeed(this.stats.upload_speed) : "0 B/s";
-  }
-
   get peersConnected() {
-    return this.stats?.peers_connected ?? 0;
+    return this.stats?.peers ?? 0;
   }
 
   get downloadedSize() {
-    return this.stats ? this.formatBytes(this.stats.downloaded_bytes) : "0 B";
+    return this.stats ? this.formatBytes(this.stats.downloaded) : "0 B";
   }
 
   get totalSize() {
-    return this.stats ? this.formatBytes(this.stats.total_bytes) : "0 B";
+    return this.stats ? this.formatBytes(this.stats.total_size) : "0 B";
   }
 
   async start(torrent: Torrent) {

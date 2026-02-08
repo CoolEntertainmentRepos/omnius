@@ -2,6 +2,8 @@
   import type { Series } from "$lib/api/types";
   import { goto } from "$app/navigation";
   import SeriesCard from "./SeriesCard.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import { favoritesStore } from "$lib/stores/favorites.svelte";
 
   interface Props {
     title: string;
@@ -14,6 +16,31 @@
   let scrollContainer: HTMLDivElement;
   let showLeftArrow = $state(false);
   let showRightArrow = $state(true);
+
+  // Long-press context menu state
+  let contextMenu = $state({ visible: false, x: 0, y: 0, seriesItem: null as Series | null });
+
+  function showContextMenuFor(target: HTMLElement, s: Series) {
+    const rect = target.getBoundingClientRect();
+    contextMenu = {
+      visible: true,
+      x: rect.left + rect.width / 2 - 100,
+      y: rect.top + rect.height / 2 - 24,
+      seriesItem: s,
+    };
+  }
+
+  function closeContextMenu() {
+    contextMenu = { visible: false, x: 0, y: 0, seriesItem: null };
+  }
+
+  function getContextMenuItems(s: Series) {
+    const isFav = favoritesStore.isSeriesFavorite(s.id);
+    return [{
+      label: isFav ? 'Remove from My List' : 'Add to My List',
+      action: () => { favoritesStore.toggleSeries(s); },
+    }];
+  }
 
   function handleScroll() {
     if (!scrollContainer) return;
@@ -61,7 +88,7 @@
         {/each}
       {:else}
         {#each series as s (s.id)}
-          <SeriesCard series={s} onclick={() => handleSeriesClick(s)} />
+          <SeriesCard series={s} onclick={() => handleSeriesClick(s)} onlongpress={(target) => showContextMenuFor(target, s)} />
         {/each}
       {/if}
     </div>
@@ -75,6 +102,16 @@
     {/if}
   </div>
 </section>
+
+{#if contextMenu.visible && contextMenu.seriesItem}
+  <ContextMenu
+    visible={contextMenu.visible}
+    x={contextMenu.x}
+    y={contextMenu.y}
+    items={getContextMenuItems(contextMenu.seriesItem)}
+    onclose={closeContextMenu}
+  />
+{/if}
 
 <style>
   .series-row {
@@ -104,6 +141,11 @@
 
   .series-scroll::-webkit-scrollbar {
     display: none;
+  }
+
+  .series-scroll :global(.series-card) {
+    flex-shrink: 0;
+    width: 150px;
   }
 
   .scroll-btn {
@@ -196,6 +238,14 @@
       width: 36px;
       height: 36px;
     }
+
+    .series-scroll :global(.series-card) {
+      width: 180px;
+    }
+
+    .series-card-skeleton {
+      width: 180px;
+    }
   }
 
   @media (max-width: 900px) {
@@ -217,6 +267,14 @@
       width: 28px;
       height: 28px;
     }
+
+    .series-scroll :global(.series-card) {
+      width: 160px;
+    }
+
+    .series-card-skeleton {
+      width: 160px;
+    }
   }
 
   @media (max-width: 600px) {
@@ -232,6 +290,14 @@
 
     .scroll-btn {
       display: none;
+    }
+
+    .series-scroll :global(.series-card) {
+      width: 140px;
+    }
+
+    .series-card-skeleton {
+      width: 140px;
     }
   }
 </style>

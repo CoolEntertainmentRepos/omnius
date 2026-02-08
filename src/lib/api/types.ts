@@ -129,21 +129,23 @@ export interface StreamInfo {
   stream_url: string;
   file_name: string;
   total_size: number;
+  file_index: number;
 }
 
 export interface StreamStats {
-  downloaded_bytes: number;
-  total_bytes: number;
+  downloaded: number;
+  total_size: number;
   download_speed: number;
-  upload_speed: number;
-  peers_connected: number;
-  progress_percent: number;
+  peers: number;
+  progress: number;
 }
 
 export interface TorrentFile {
   index: number;
   name: string;
-  size: number;
+  length: number;
+  is_video: boolean;
+  is_subtitle: boolean;
 }
 
 export interface MovieRating {

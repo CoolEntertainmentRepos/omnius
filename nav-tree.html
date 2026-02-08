@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Omnius - Navigation Tree (Nested Routes)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; color: #fff; margin-bottom: 4px; }
+  .subtitle { color: #888; margin-bottom: 32px; font-size: 0.85rem; }
+
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 40px; }
+  .compare-box { background: #1a1a1a; border-radius: 12px; padding: 20px; border: 1px solid #2a2a2a; }
+  .compare-box h2 { font-size: 0.95rem; margin-bottom: 12px; }
+  .compare-box.old h2 { color: #e74c3c; }
+  .compare-box.new h2 { color: #2ecc71; }
+  .compare-box pre { font-size: 0.78rem; line-height: 1.6; color: #aaa; }
+  .compare-box pre .route { color: #f39c12; }
+  .compare-box pre .comment { color: #555; }
+  .compare-box pre .bad { color: #e74c3c; }
+  .compare-box pre .good { color: #2ecc71; }
+
+  .section { background: #1a1a1a; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #2a2a2a; }
+  .section h2 { font-size: 1.05rem; color: #fff; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .tag.red { background: #e50914; color: #fff; }
+  .tag.green { background: #2ecc71; color: #fff; }
+  .tag.orange { background: #f39c12; color: #fff; }
+  .tag.purple { background: #9b59b6; color: #fff; }
+
+  /* Tree visual */
+  .tree { font-family: monospace; font-size: 0.85rem; line-height: 2; }
+  .tree .node { display: flex; align-items: center; gap: 8px; }
+  .tree .indent { color: #333; user-select: none; }
+  .tree .path { color: #f39c12; font-weight: 600; }
+  .tree .label { color: #888; }
+  .tree .back { color: #e50914; font-size: 0.75rem; background: rgba(229,9,20,0.1); padding: 1px 8px; border-radius: 3px; }
+  .tree .file { color: #555; font-size: 0.72rem; }
+  .tree .new-file { color: #2ecc71; font-size: 0.72rem; }
+  .tree .existing { color: #f39c12; font-size: 0.72rem; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th { text-align: left; padding: 10px 12px; font-size: 0.78rem; color: #666; border-bottom: 1px solid #333; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 12px; font-size: 0.82rem; border-bottom: 1px solid #1e1e1e; vertical-align: top; }
+  td.route { font-family: monospace; color: #f39c12; }
+  td.back { color: #e50914; font-family: monospace; }
+  td.note { color: #666; font-size: 0.78rem; }
+  td.action { color: #2ecc71; }
+
+  .flow { margin-top: 12px; }
+  .flow-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .flow-box { background: #222; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; color: #fff; white-space: nowrap; font-family: monospace; }
+  .flow-box.home { background: #e50914; }
+  .flow-box.page { background: #333; }
+  .flow-box.player { background: #1a472a; border: 1px solid #2ecc71; }
+  .flow-arrow { color: #555; font-size: 0.85rem; }
+  .flow-back { color: #e50914; font-size: 0.7rem; font-weight: 600; }
+
+  .rule { background: #111; border-radius: 8px; padding: 14px 18px; margin: 8px 0; font-size: 0.82rem; color: #ccc; border-left: 3px solid #e50914; }
+  .rule code { background: #222; padding: 2px 6px; border-radius: 3px; color: #f39c12; font-size: 0.78rem; }
+  .rule strong { color: #fff; }
+
+  .substate { margin-top: 12px; }
+  .substate-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 0.82rem; }
+  .substate-state { color: #aaa; min-width: 220px; }
+  .substate-arrow { color: #e50914; }
+  .substate-target { color: #2ecc71; }
+</style>
+</head>
+<body>
+
+<h1>Omnius TV - Nested Route Navigation</h1>
+<p class="subtitle">Back = go up one path segment. No history.back(). App never kills on back at root.</p>
+
+<!-- BEFORE / AFTER -->
+<div class="compare">
+  <div class="compare-box old">
+    <h2>Current (Flat Routes)</h2>
+    <pre>
+<span class="route">/</span>                    <span class="comment">← everything in one page</span>
+<span class="route">/movie/[id]</span>           <span class="bad">← back: /?tab=movies</span>
+<span class="route">/series/[id]</span>          <span class="bad">← back: /?tab=tvshows</span>
+<span class="route">/player/[hash]</span>        <span class="bad">← back: /movie/[id] maybe?</span>
+<span class="route">/live</span>                 <span class="bad">← back: history.back()</span>
+<span class="route">/settings</span>             <span class="bad">← back: history.back()</span>
+
+<span class="comment">Problems:</span>
+<span class="bad">- All tabs crammed in /</span>
+<span class="bad">- Player doesn't know parent</span>
+<span class="bad">- history.back() unpredictable</span>
+<span class="bad">- Back can kill the app</span></pre>
+  </div>
+  <div class="compare-box new">
+    <h2>Proposed (Nested Routes)</h2>
+    <pre>
+<span class="route">/</span>                         <span class="good">← home (hero + rows)</span>
+<span class="route">/movies</span>                   <span class="good">← back → /</span>
+<span class="route">/movies/[id]</span>              <span class="good">← back → /movies</span>
+<span class="route">/movies/[id]/play/[hash]</span>  <span class="good">← back → /movies/[id]</span>
+<span class="route">/series</span>                   <span class="good">← back → /</span>
+<span class="route">/series/[id]</span>              <span class="good">← back → /series</span>
+<span class="route">/series/[id]/play/[hash]</span>  <span class="good">← back → /series/[id]</span>
+<span class="route">/live</span>                     <span class="good">← back → /</span>
+<span class="route">/live/play</span>                <span class="good">← back → /live</span>
+<span class="route">/favorites</span>                <span class="good">← back → /</span>
+<span class="route">/search</span>                   <span class="good">← back → /</span>
+<span class="route">/settings</span>                 <span class="good">← back → /</span>
+
+<span class="comment">Rule: always goto(parent path)</span>
+<span class="good">- Back is deterministic</span>
+<span class="good">- Player always knows parent</span>
+<span class="good">- Root page: back does nothing</span></pre>
+  </div>
+</div>
+
+<!-- ROUTE TREE -->
+<div class="section">
+  <h2>Route Tree &amp; File Structure</h2>
+  <div class="tree">
+    <div class="node"><span class="indent"></span><span class="path">/</span> <span class="label">Home — hero, trending rows, tabs</span> <span class="existing">MODIFY +page.svelte (strip movies/series/live/search/favorites out)</span></div>
+    <div class="node"><span class="indent">├── </span><span class="path">/movies</span> <span class="label">Browse movies — curated, genre, year, search</span> <span class="new-file">NEW routes/movies/+page.svelte</span></div>
+    <div class="node"><span class="indent">│   └── </span><span class="path">/movies/[id]</span> <span class="label">Movie detail</span> <span class="existing">MOVE routes/movie/[id] → routes/movies/[id]</span></div>
+    <div class="node"><span class="indent">│       └── </span><span class="path">/movies/[id]/play/[hash]</span> <span class="label">Player</span> <span class="existing">MOVE routes/player/[hash] → nested</span></div>
+    <div class="node"><span class="indent">├── </span><span class="path">/series</span> <span class="label">Browse series — curated, genre, network, search</span> <span class="new-file">NEW routes/series/+page.svelte</span></div>
+    <div class="node"><span class="indent">│   └── </span><span class="path">/series/[id]</span> <span class="label">Series detail</span> <span class="existing">KEEP routes/series/[id] (already here)</span></div>
+    <div class="node"><span class="indent">│       └── </span><span class="path">/series/[id]/play/[hash]</span> <span class="label">Player</span> <span class="new-file">NEW (shared player component)</span></div>
+    <div class="node"><span class="indent">├── </span><span class="path">/live</span> <span class="label">Live channels — countries, categories, search</span> <span class="new-file">NEW routes/live/+page.svelte (channel list)</span></div>
+    <div class="node"><span class="indent">│   └── </span><span class="path">/live/play</span> <span class="label">Live player</span> <span class="existing">MOVE current /live player here</span></div>
+    <div class="node"><span class="indent">├── </span><span class="path">/search</span> <span class="label">Search — movies, series, channels</span> <span class="new-file">NEW routes/search/+page.svelte</span></div>
+    <div class="node"><span class="indent">├── </span><span class="path">/favorites</span> <span class="label">My List — saved movies, series, channels</span> <span class="new-file">NEW routes/favorites/+page.svelte</span></div>
+    <div class="node"><span class="indent">└── </span><span class="path">/settings</span> <span class="label">App settings</span> <span class="existing">KEEP routes/settings/+page.svelte</span></div>
+  </div>
+</div>
+
+<!-- BACK BUTTON TABLE -->
+<div class="section">
+  <h2>Back Button Map <span class="tag red">goto() only</span></h2>
+  <table>
+    <tr><th>Current Route</th><th>Back Goes To</th><th>How</th><th>At Root?</th></tr>
+    <tr>
+      <td class="route">/ <span style="color:#888">(focus in content)</span></td>
+      <td class="back">focus sidebar Home</td>
+      <td class="action">Move focus to sidebar, don't navigate</td>
+      <td class="note">Yes — root, but retreat to sidebar</td>
+    </tr>
+    <tr>
+      <td class="route">/ <span style="color:#888">(focus in sidebar)</span></td>
+      <td class="back">nowhere</td>
+      <td class="action">Do nothing. Swallow event. Don't kill app.</td>
+      <td class="note">Yes — true root, nothing left</td>
+    </tr>
+    <tr>
+      <td class="route">/movies</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/movies/[id]</td>
+      <td class="back">goto("/movies")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/movies/[id]/play/[hash]</td>
+      <td class="back">goto("/movies/{id}")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/series</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/series/[id]</td>
+      <td class="back">goto("/series")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/series/[id]/play/[hash]</td>
+      <td class="back">goto("/series/{id}")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/live</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/live/play?url=...&chIdx=N</td>
+      <td class="back">goto("/live")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/search</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/favorites</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="route">/settings</td>
+      <td class="back">goto("/")</td>
+      <td class="action">Parent path</td>
+      <td></td>
+    </tr>
+  </table>
+
+  <div class="rule" style="margin-top: 16px;">
+    <strong>Universal rule:</strong> On back press, compute parent = <code>route.split('/').slice(0, -1).join('/') || '/'</code> then <code>goto(parent)</code>. At <code>/</code> → do nothing.
+  </div>
+</div>
+
+<!-- SUB-STATE BACK (within pages) -->
+<div class="section">
+  <h2>Sub-State Back <span class="tag orange">within a page</span></h2>
+  <p style="color: #888; font-size: 0.82rem; margin-bottom: 12px;">Some pages have internal states. Back should unwind these BEFORE navigating to parent route.</p>
+
+  <table>
+    <tr><th>Page</th><th>Sub-State</th><th>Back Action (before goto parent)</th></tr>
+    <tr>
+      <td class="route">/movies</td>
+      <td class="note">Genre selected (showing genre movies)</td>
+      <td class="action">Deselect genre → show browse grid</td>
+    </tr>
+    <tr>
+      <td class="route">/movies</td>
+      <td class="note">Year selected</td>
+      <td class="action">Deselect year → show browse grid</td>
+    </tr>
+    <tr>
+      <td class="route">/movies</td>
+      <td class="note">Search results showing</td>
+      <td class="action">Clear search → show browse grid</td>
+    </tr>
+    <tr>
+      <td class="route">/movies</td>
+      <td class="note">No sub-state (browse grid)</td>
+      <td class="action">goto("/")</td>
+    </tr>
+    <tr>
+      <td class="route">/series</td>
+      <td class="note">Genre/network selected</td>
+      <td class="action">Deselect → show browse grid</td>
+    </tr>
+    <tr>
+      <td class="route">/series</td>
+      <td class="note">No sub-state</td>
+      <td class="action">goto("/")</td>
+    </tr>
+    <tr>
+      <td class="route">/live</td>
+      <td class="note">Country/category selected (showing channels)</td>
+      <td class="action">Deselect → show country/category grid</td>
+    </tr>
+    <tr>
+      <td class="route">/live</td>
+      <td class="note">No sub-state</td>
+      <td class="action">goto("/")</td>
+    </tr>
+    <tr>
+      <td class="route">/search</td>
+      <td class="note">Genre selected</td>
+      <td class="action">Deselect genre → show genre grid</td>
+    </tr>
+    <tr>
+      <td class="route">/search</td>
+      <td class="note">Search results showing</td>
+      <td class="action">Clear search → show genre grid</td>
+    </tr>
+    <tr>
+      <td class="route">/search</td>
+      <td class="note">No sub-state</td>
+      <td class="action">goto("/")</td>
+    </tr>
+    <tr>
+      <td class="route">/movies/[id]</td>
+      <td class="note">More Info modal open</td>
+      <td class="action">Close modal</td>
+    </tr>
+    <tr>
+      <td class="route">/movies/[id]</td>
+      <td class="note">No modal</td>
+      <td class="action">goto("/movies")</td>
+    </tr>
+    <tr>
+      <td class="route">/series/[id]</td>
+      <td class="note">More Info modal open</td>
+      <td class="action">Close modal</td>
+    </tr>
+    <tr>
+      <td class="route">/series/[id]</td>
+      <td class="note">No modal</td>
+      <td class="action">goto("/series")</td>
+    </tr>
+  </table>
+
+  <div class="rule" style="margin-top: 16px;">
+    <strong>Priority:</strong> Close modal → unwind sub-state → goto(parent route). Check in that order.
+  </div>
+</div>
+
+<!-- VISUAL FLOWS -->
+<div class="section">
+  <h2>Back Button Flows (visual)</h2>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px;">Home: back retreats focus to sidebar, then stops</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/ (card focused)</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box" style="background: #9b59b6;">/ (sidebar focused)</div>
+      <span class="flow-back">← back</span>
+      <span style="color: #666; font-size: 0.78rem;">nothing (swallow)</span>
+    </div>
+    <div style="margin-top: 6px; color: #888; font-size: 0.75rem;">
+      Same as pressing Left when there's nothing to the left — two ways to reach sidebar.
+    </div>
+  </div>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin: 20px 0 8px;">Movie: browse → detail → play → back → back → back → home</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/movies</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/movies/42</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box player">/movies/42/play/abc</div>
+    </div>
+    <div class="flow-row" style="margin-top: 4px;">
+      <div class="flow-box player">/movies/42/play/abc</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/movies/42</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/movies</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box home">/</div>
+      <span class="flow-back">← back</span>
+      <span style="color: #666; font-size: 0.78rem;">nothing (root)</span>
+    </div>
+  </div>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin: 20px 0 8px;">Series: browse → detail → play → back all the way</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/series</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/series/99</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box player">/series/99/play/xyz</div>
+    </div>
+    <div class="flow-row" style="margin-top: 4px;">
+      <div class="flow-box player">/series/99/play/xyz</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/series/99</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/series</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box home">/</div>
+      <span class="flow-back">← back</span>
+      <span style="color: #666; font-size: 0.78rem;">nothing</span>
+    </div>
+  </div>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin: 20px 0 8px;">Live TV: countries → channels → player → back</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/live</div>
+      <span style="color: #666; font-size: 0.72rem;">(pick country)</span>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/live</div>
+      <span style="color: #666; font-size: 0.72rem;">(channels list)</span>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box player">/live/play?url=...&chIdx=4</div>
+    </div>
+    <div class="flow-row" style="margin-top: 4px;">
+      <div class="flow-box player">/live/play</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/live</div>
+      <span style="color: #666; font-size: 0.72rem;">(channels)</span>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/live</div>
+      <span style="color: #666; font-size: 0.72rem;">(countries)</span>
+      <span class="flow-back">← back</span>
+      <div class="flow-box home">/</div>
+    </div>
+  </div>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin: 20px 0 8px;">Search: genre → results → back</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/search</div>
+      <span style="color: #666; font-size: 0.72rem;">(genre grid)</span>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/search</div>
+      <span style="color: #666; font-size: 0.72rem;">(Action movies)</span>
+    </div>
+    <div class="flow-row" style="margin-top: 4px;">
+      <div class="flow-box page">/search</div>
+      <span style="color: #666; font-size: 0.72rem;">(Action)</span>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/search</div>
+      <span style="color: #666; font-size: 0.72rem;">(grid)</span>
+      <span class="flow-back">← back</span>
+      <div class="flow-box home">/</div>
+    </div>
+  </div>
+
+  <p style="color: #f39c12; font-size: 0.85rem; font-weight: 600; margin: 20px 0 8px;">Home card shortcut: click movie from home row</p>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-box home">/</div>
+      <span class="flow-arrow">→</span>
+      <span style="color: #666; font-size: 0.72rem;">click movie card</span>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box page">/movies/42</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-box player">/movies/42/play/abc</div>
+    </div>
+    <div class="flow-row" style="margin-top: 4px;">
+      <div class="flow-box player">/movies/42/play/abc</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/movies/42</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box page">/movies</div>
+      <span class="flow-back">← back</span>
+      <div class="flow-box home">/</div>
+    </div>
+    <div style="margin-top: 6px; color: #888; font-size: 0.75rem;">
+      Note: clicking a card from / goes to /movies/[id] directly. Back from detail always goes to /movies (the browse page), not /. This is consistent and predictable.
+    </div>
+  </div>
+</div>
+
+<!-- SIDEBAR NAV -->
+<div class="section">
+  <h2>Sidebar Navigation <span class="tag green">always visible</span></h2>
+  <p style="color: #888; font-size: 0.82rem; margin-bottom: 12px;">Sidebar is a global component in +layout.svelte. Clicking a nav item navigates to a route.</p>
+  <table>
+    <tr><th>Sidebar Item</th><th>Navigates To</th><th>Currently</th></tr>
+    <tr>
+      <td>Home</td>
+      <td class="route">goto("/")</td>
+      <td class="note">activeNav = "home" (same page)</td>
+    </tr>
+    <tr>
+      <td>Search</td>
+      <td class="route">goto("/search")</td>
+      <td class="note">activeNav = "search" (same page)</td>
+    </tr>
+    <tr>
+      <td>Movies</td>
+      <td class="route">goto("/movies")</td>
+      <td class="note">activeNav = "movies" (same page)</td>
+    </tr>
+    <tr>
+      <td>TV Series</td>
+      <td class="route">goto("/series")</td>
+      <td class="note">activeNav = "tv" (same page)</td>
+    </tr>
+    <tr>
+      <td>Live TV</td>
+      <td class="route">goto("/live")</td>
+      <td class="note">activeNav = "live" (same page)</td>
+    </tr>
+    <tr>
+      <td>Favorites</td>
+      <td class="route">goto("/favorites")</td>
+      <td class="note">activeNav = "favorites" (same page)</td>
+    </tr>
+    <tr>
+      <td>Settings</td>
+      <td class="route">goto("/settings")</td>
+      <td class="note">Already a route</td>
+    </tr>
+  </table>
+</div>
+
+<!-- FILE CHANGES -->
+<div class="section">
+  <h2>File Changes Required</h2>
+  <table>
+    <tr><th>Action</th><th>File</th><th>What</th></tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/movies/+page.svelte</td>
+      <td class="note">Extract movies browse from +page.svelte (curated, genre, year, search)</td>
+    </tr>
+    <tr>
+      <td><span class="tag orange">MOVE</span></td>
+      <td class="route">src/routes/movie/[id] → src/routes/movies/[id]</td>
+      <td class="note">Rename movie → movies for nesting</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/movies/[id]/play/[hash]/+page.svelte</td>
+      <td class="note">Player nested under movie (reuse PlayerPage component)</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/series/+page.svelte</td>
+      <td class="note">Extract series browse from +page.svelte</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/series/[id]/play/[hash]/+page.svelte</td>
+      <td class="note">Player nested under series</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/live/+page.svelte</td>
+      <td class="note">Extract live channels browse from +page.svelte</td>
+    </tr>
+    <tr>
+      <td><span class="tag orange">MOVE</span></td>
+      <td class="route">src/routes/live/+page.svelte → src/routes/live/play/+page.svelte</td>
+      <td class="note">Current live player becomes /live/play</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/search/+page.svelte</td>
+      <td class="note">Extract search from +page.svelte</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/routes/favorites/+page.svelte</td>
+      <td class="note">Extract favorites from +page.svelte</td>
+    </tr>
+    <tr>
+      <td><span class="tag orange">MODIFY</span></td>
+      <td class="route">src/routes/+page.svelte</td>
+      <td class="note">Slim down to just: hero + home content rows. Remove all tab content.</td>
+    </tr>
+    <tr>
+      <td><span class="tag orange">MODIFY</span></td>
+      <td class="route">src/routes/+layout.svelte</td>
+      <td class="note">Global back handler: compute parent path, goto(). Sidebar navigates to routes.</td>
+    </tr>
+    <tr>
+      <td><span class="tag green">NEW</span></td>
+      <td class="route">src/lib/components/PlayerPage.svelte</td>
+      <td class="note">Shared player component used by both movie and series play routes</td>
+    </tr>
+    <tr>
+      <td><span class="tag red">DELETE</span></td>
+      <td class="route">src/routes/player/[hash]/+page.svelte</td>
+      <td class="note">Replaced by nested /movies/[id]/play/[hash] and /series/[id]/play/[hash]</td>
+    </tr>
+  </table>
+</div>
+
+<!-- GLOBAL BACK HANDLER -->
+<div class="section">
+  <h2>Global Back Handler <span class="tag purple">+layout.svelte</span></h2>
+  <div class="rule">
+    <strong>Algorithm (in +layout.svelte keydown handler):</strong><br><br>
+    1. Let page intercept first (close modal, unwind sub-state). If handled → stop.<br>
+    2. Let <code>path = $page.url.pathname</code><br>
+    3. If <code>path === "/"</code> and focus is in content area → <strong>move focus to sidebar Home</strong><br>
+    4. If <code>path === "/"</code> and focus is in sidebar → <strong>do nothing</strong> (swallow event, don't kill app)<br>
+    5. Else compute <code>parent = path.split("/").slice(0, -1).join("/") || "/"</code><br>
+    6. <code>goto(parent, { replaceState: true })</code><br><br>
+    <strong>Focus check:</strong> <code>document.activeElement.closest('.sidebar')</code> to detect if focus is in sidebar.
+  </div>
+</div>
+
+</body>
+</html>

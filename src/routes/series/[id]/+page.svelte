@@ -129,7 +129,7 @@
       if (selectedTorrent.file_index !== undefined && selectedTorrent.file_index !== null) {
         params.set("fileIndex", String(selectedTorrent.file_index));
       }
-      await goto(`/player/${selectedTorrent.hash}?${params.toString()}`);
+      await goto(`/series/${seriesId}/play/${selectedTorrent.hash}?${params.toString()}`);
     } catch (err) {
       console.error("Navigation failed:", err);
       streamError = "Failed to start playback. Please try again.";
@@ -168,9 +168,11 @@
   });
 
   function handleModalKeydown(e: KeyboardEvent) {
+    console.log(`[SeriesModal] keydown key=${e.key} showMore=${showMore} target=${(e.target as HTMLElement).className}`);
     if (e.key === 'Escape' || e.key === 'GoBack' || e.key === 'XF86Back' || (e.key === 'Backspace' && !(e.target instanceof HTMLInputElement))) {
       e.preventDefault();
       e.stopPropagation();
+      console.log('[SeriesModal] Closing modal, stopped propagation');
       showMore = false;
       return;
     }
@@ -222,7 +224,7 @@
       </svg>
       <p>{error}</p>
       <div class="error-buttons">
-        <button class="back-button" onclick={() => goto('/?tab=tvshows')}>
+        <button class="back-button" onclick={() => goto('/series')}>
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
           </svg>
@@ -242,7 +244,7 @@
 
     <!-- Back Button -->
     <nav class="nav">
-      <button class="back-btn" onclick={() => goto('/?tab=tvshows')} aria-label="Go back">
+      <button class="back-btn" onclick={() => goto('/series')} aria-label="Go back">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
         </svg>

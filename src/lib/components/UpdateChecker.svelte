@@ -33,20 +33,9 @@
       }
       checking = false;
     } catch {
-      // Fallback to manual check (for Android TV or if plugin not available)
+      // Not running in Tauri desktop - no update check available (Android TV WebView)
       isDesktop = false;
-      try {
-        const info = await checkForUpdates();
-        updateInfo = info;
-        if (info.update_available) {
-          showModal = true;
-        }
-      } catch (err) {
-        console.error("Failed to check for updates:", err);
-        error = err instanceof Error ? err.message : "Update check failed";
-      } finally {
-        checking = false;
-      }
+      checking = false;
     }
   });
 

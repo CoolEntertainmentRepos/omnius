@@ -10,13 +10,13 @@
 
   function handlePlay() {
     if (movie) {
-      goto(`/movie/${movie.id}`);
+      goto(`/movies/${movie.id}`);
     }
   }
 
   function handleMoreInfo() {
     if (movie) {
-      goto(`/movie/${movie.id}`);
+      goto(`/movies/${movie.id}`);
     }
   }
 </script>

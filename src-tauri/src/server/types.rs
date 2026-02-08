@@ -2,18 +2,25 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamInfo {
+    #[serde(default)]
+    pub info_hash: String,
     pub stream_url: String,
     pub file_name: String,
     pub total_size: u64,
+    #[serde(default)]
     pub file_index: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamStatus {
+    #[serde(alias = "downloaded_bytes")]
     pub downloaded: u64,
+    #[serde(alias = "total_bytes")]
     pub total_size: u64,
     pub download_speed: u64,
+    #[serde(alias = "peers_connected")]
     pub peers: u32,
+    #[serde(alias = "progress_percent")]
     pub progress: f64,
 }
 

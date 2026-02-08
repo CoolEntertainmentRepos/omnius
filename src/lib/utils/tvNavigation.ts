@@ -58,6 +58,21 @@ export async function initSpatialNavigation() {
       }
     });
 
+    // Throttle held-down key repeats to prevent janky scrolling
+    let lastRepeatTime = 0;
+    const REPEAT_THROTTLE = 150; // ms — allows ~6 moves/sec max
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat) {
+        const now = Date.now();
+        if (now - lastRepeatTime < REPEAT_THROTTLE) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        lastRepeatTime = now;
+      }
+    }, true); // capture phase — runs before spatial-nav and component handlers
+
     initialized = true;
     console.log('[SpatialNav] Initialization complete!');
   } catch (error) {
@@ -72,6 +87,13 @@ export function addSection(id: string, selector: string, options?: {
   leaveFor?: { up?: string; down?: string; left?: string; right?: string };
 }) {
   if (!SpatialNavigation) return;
+
+  // Remove existing section first to avoid "already existed" errors (e.g. HMR or re-mount)
+  try {
+    SpatialNavigation.remove(id);
+  } catch {
+    // Section didn't exist, that's fine
+  }
 
   SpatialNavigation.add({
     id,

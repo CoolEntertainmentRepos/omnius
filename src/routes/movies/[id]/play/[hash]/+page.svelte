@@ -13,9 +13,20 @@
     return await platform();
   }
 
-  async function callPlayVideo(url: string): Promise<void> {
-    const { playVideo } = await import("tauri-plugin-videoplayer-api");
-    await playVideo(url);
+  async function callPlayVideo(url: string, options?: {
+    subtitles?: Array<{ url: string; language: string; label: string; mimeType: string }>;
+    startPosition?: number;
+    title?: string;
+  }): Promise<void> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke('plugin:videoplayer|play_video', {
+      payload: {
+        path: url,
+        subtitles: options?.subtitles,
+        startPosition: options?.startPosition,
+        title: options?.title,
+      }
+    });
   }
 
   async function onPlaybackEvent(eventName: string, handler: (event: any) => void) {
@@ -248,8 +259,8 @@
 
           const estimatedDurationSec = 7200;
           const bitrateBytes = totalBytes > 0 ? totalBytes / estimatedDurationSec : 0;
-          const thirtySecBuffer = bitrateBytes * 30;
-          const requiredBytes = Math.max(50 * 1024 * 1024, thirtySecBuffer);
+          const fifteenSecBuffer = bitrateBytes * 15;
+          const requiredBytes = Math.max(15 * 1024 * 1024, fifteenSecBuffer);
           const requiredMB = requiredBytes / (1024 * 1024);
 
           // Update reactive state for splash UI
@@ -261,10 +272,11 @@
             "required:", requiredMB.toFixed(0) + "MB",
             "speed:", speedMB.toFixed(1) + "MB/s", "peers:", peers);
 
-          if (downloaded >= requiredBytes && speedMB > 0.3 && peers >= 1) {
+          // Start as soon as we have enough data - don't gate on speed/peers
+          if (downloaded >= requiredBytes) {
             return true;
           }
-          if (progress >= 8) return true;
+          if (progress >= 3) return true;
 
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -340,7 +352,11 @@
       }
 
       try {
-        await callPlayVideo(actualStreamUrl);
+        await callPlayVideo(actualStreamUrl, {
+          subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
+          startPosition: resumePosition > 0 ? resumePosition : undefined,
+          title: title,
+        });
 
         nativePlayerLaunched = true;
 
@@ -940,7 +956,11 @@
     if (!actualStreamUrl) return;
     try {
       const subtitleTracks = await gatherAllSubtitles(hash, imdbCode);
-      await callPlayVideo(actualStreamUrl);
+      await callPlayVideo(actualStreamUrl, {
+        subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
+        startPosition: resumePosition > 0 ? resumePosition : undefined,
+        title: title,
+      });
       // Position saved via positionUpdate event listener
     } catch (err) {
       console.error("[Player] Native replay failed:", err);

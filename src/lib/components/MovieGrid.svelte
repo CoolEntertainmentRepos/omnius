@@ -36,7 +36,7 @@
   });
 
   function handleMovieClick(movie: Movie) {
-    goto(`/movie/${movie.id}`);
+    goto(`/movies/${movie.id}`);
   }
 </script>
 

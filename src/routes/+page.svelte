@@ -1,33 +1,26 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { browser } from "$app/environment";
-  import { page } from "$app/stores";
   import MovieRow from "$lib/components/MovieRow.svelte";
   import Top10Row from "$lib/components/Top10Row.svelte";
-  import MovieGrid from "$lib/components/MovieGrid.svelte";
   import SeriesRow from "$lib/components/SeriesRow.svelte";
-  import SeriesGrid from "$lib/components/SeriesGrid.svelte";
   import LiveTVFavoritesSection from "$lib/components/LiveTVFavoritesSection.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import SearchSection from "$lib/components/SearchSection.svelte";
-  import { listMovies, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
-  import { favoritesStore } from "$lib/stores/favorites.svelte";
+  import { listMovies, getLocalRatings, listSeries, listChannels, getHomeData, getImdbImages, type HomeSection } from "$lib/api/commands";
   import { configStore } from "$lib/stores/config.svelte";
   import { makeFocusable, addSection, setFocus } from "$lib/utils/tvNavigation";
-  import type { Movie, Series, ListSeriesParams, Channel } from "$lib/api/types";
+  import type { Movie, Series, Channel } from "$lib/api/types";
 
-  // Category rows data
+  // Hero
   let featured = $state<Movie | null>(null);
   let featuredBackground = $state<string | null>(null);
-
-  // Hero background slideshow (multiple images for same movie)
   let heroBackgrounds = $state<string[]>([]);
   let currentBgIndex = $state(0);
   let prevBgIndex = $state(-1);
   let bgTransitioning = $state(false);
   let heroInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Movie rows
   let trending = $state<Movie[]>([]);
   let topRated = $state<Movie[]>([]);
   let newReleases = $state<Movie[]>([]);
@@ -37,153 +30,22 @@
   let scifi = $state<Movie[]>([]);
   let drama = $state<Movie[]>([]);
   let homeSeries = $state<Series[]>([]);
-  let homeChannels = $state<Channel[]>([]);
 
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let retryCount = $state(0);
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let activeNav = $state("home");
   let homeTab = $state<string>('all');
 
-  // Search state
-  let searchQuery = $state("");
-  let searchResults = $state<Movie[]>([]);
-  let searchSuggestions = $state<Movie[]>([]);
-  let searchLoading = $state(false);
-  let showSearch = $state(false);
-  let showSuggestions = $state(false);
-  let searchDebounceTimer: ReturnType<typeof setTimeout>;
-
-  // Genre browsing
-  let selectedGenre = $state<string | null>(null);
-  let genreMovies = $state<Movie[]>([]);
-  let genreLoading = $state(false);
-  let genrePage = $state(1);
-  let genreTotal = $state(0);
-  let genreLoadingMore = $state(false);
-
-  // Live Channels (IPTV) - using iptv-org API
-  interface IPTVChannel {
-    id: string;
-    name: string;
-    country: string;
-    languages: string[];
-    categories: string[];
-    logo?: string;
-    url?: string;
-  }
-  interface IPTVStream {
-    channel: string;
-    url: string;
-  }
-  interface IPTVCountry {
-    code: string;
-    name: string;
-    flag: string;
-  }
-  interface IPTVCategory {
-    id: string;
-    name: string;
-  }
-
-  let iptvChannels = $state<IPTVChannel[]>([]);
-  let iptvCountries = $state<IPTVCountry[]>([]);
-  let iptvCategories = $state<IPTVCategory[]>([]);
-  let channelGroups = $state<string[]>([]);
-  let selectedGroup = $state<string | null>(null);
-  let channelsLoading = $state(false);
-  let channelsError = $state<string | null>(null);
-  let channelGroupBy = $state<'country' | 'category' | 'search'>('country');
-  let channelSearchQuery = $state('');
-  let channelSearchResults = $state<Channel[]>([]);
-  let channelSearchLoading = $state(false);
-
-  // Movie browse tabs
-  let movieBrowseMode = $state<'genre' | 'year' | 'curated' | 'search'>('curated');
-  let movieSearchQuery = $state('');
-  let movieSearchResults = $state<Movie[]>([]);
-  let movieSearchLoading = $state(false);
-  let selectedYear = $state<number | null>(null);
-  let yearMovies = $state<Movie[]>([]);
-  let yearLoading = $state(false);
-  let curatedList = $state<string>('');
-  let curatedMovies = $state<Movie[]>([]);
-  let curatedLoading = $state(false);
-  let curatedLists = $state<CuratedList[]>([]);
-  let curatedListsLoading = $state(false);
-
-  const years = Array.from({ length: 30 }, (_, i) => new Date().getFullYear() - i);
-
-  // TV Series state
-  let tvSeries = $state<Series[]>([]);
-  let tvSeriesTopRated = $state<Series[]>([]);
-  let tvSeriesOngoing = $state<Series[]>([]);
-  let tvSeriesLoading = $state(false);
-  let tvSeriesPage = $state(1);
-  let tvSeriesTotal = $state(0);
-  let tvSeriesLoadingMore = $state(false);
-  let tvBrowseMode = $state<'curated' | 'genre' | 'network' | 'search'>('curated');
-  let tvSearchQuery = $state('');
-  let tvSearchResults = $state<Series[]>([]);
-  let tvSearchLoading = $state(false);
-  let tvCuratedList = $state<string>('top');
-  let tvCuratedSeries = $state<Series[]>([]);
-  let tvCuratedLoading = $state(false);
-  let tvSelectedGenre = $state<string | null>(null);
-  let tvGenreSeries = $state<Series[]>([]);
-  let tvGenreLoading = $state(false);
-  let tvSelectedNetwork = $state<string | null>(null);
-  let tvNetworkSeries = $state<Series[]>([]);
-  let tvNetworkLoading = $state(false);
-
-  const tvCuratedLists = [
-    { id: 'top', name: 'Top Rated', filter: { sort_by: 'rating', order_by: 'desc', minimum_rating: 8.5 } },
-    { id: 'popular', name: 'Most Popular', filter: { sort_by: 'date_added', order_by: 'desc' } },
-    { id: 'ongoing', name: 'Ongoing', filter: { status: 'Continuing' } },
-    { id: 'classics', name: 'Classics', filter: { sort_by: 'rating', order_by: 'desc', maximum_year: 2010 } },
-  ];
-
-  const tvGenres = ['Drama', 'Comedy', 'Action', 'Adventure', 'Crime', 'Thriller', 'Sci-Fi', 'Fantasy', 'Horror', 'Mystery', 'Animation', 'Documentary', 'Romance', 'Biography', 'History', 'War'];
-  const tvNetworks = ['HBO', 'Netflix', 'AMC', 'BBC', 'NBC', 'CBS', 'ABC', 'FOX', 'Disney+', 'Showtime', 'Comedy Central', 'Adult Swim', 'The CW', 'PBS', 'Nickelodeon'];
-
-  // Pagination for category views
-  let trendingPage = $state(1);
-  let trendingTotal = $state(0);
-  let trendingLoadingMore = $state(false);
-
-  let newReleasesPage = $state(1);
-  let newReleasesTotal = $state(0);
-  let newReleasesLoadingMore = $state(false);
-
-  let searchPage = $state(1);
-  let searchTotal = $state(0);
-  let searchLoadingMore = $state(false);
-
-  const genres = [
-    "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime",
-    "Documentary", "Drama", "Family", "Fantasy", "History", "Horror",
-    "Music", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western"
-  ];
+  // Dynamic home sections from API
+  let homeSections = $state<HomeSection[]>([]);
 
   onMount(() => {
-    // Check for tab parameter in URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const tab = urlParams.get('tab');
-    if (tab === 'tvshows' || tab === 'tv') {
-      handleNavClick('tv');
-    } else if (tab === 'movies') {
-      handleNavClick('movies');
-    } else if (tab === 'live' || tab === 'channels') {
-      handleNavClick('live');
-    } else {
-      loadHomeContent();
-    }
-    // Refresh focusable elements and set initial focus
+    loadHomeContent();
+
     setTimeout(() => {
       makeFocusable();
 
-      // Add sidebar section with navigation to content on RIGHT
       addSection('sidebar', '.sidebar .nav-item', {
         restrict: 'self-first',
         leaveFor: {
@@ -192,7 +54,6 @@
         }
       });
 
-      // Add content section
       addSection('content', '.main-content button, .main-content a, .movie-card', {
         restrict: 'self-first',
         leaveFor: {
@@ -200,45 +61,35 @@
         }
       });
 
-      // Focus on Home nav button immediately for TV D-pad navigation
       setFocus('.nav-item[aria-label="Home"]');
     }, 300);
 
-    // Cleanup on unmount
     return () => {
       if (retryTimer) clearTimeout(retryTimer);
       stopHeroAutoplay();
     };
   });
 
-  // Dynamic home sections from API
-  let homeSections = $state<HomeSection[]>([]);
-
   async function loadHomeContent() {
     loading = true;
     loadError = null;
 
     try {
-      // Ensure config is loaded before checking enabled services
       if (!configStore.loaded) {
         await configStore.fetchConfig();
       }
 
-      // First, try to load dynamic home data from server
       const homeData = await getHomeData();
       homeSections = homeData.sections || [];
-      console.log('[Home] Loaded sections from API:', homeSections.length);
 
-      // Get featured movie from hero_slider or hero section
+      // Get featured movie
       if (homeData.hero_slider?.[0]) {
         featured = homeData.hero_slider[0];
       } else {
-        // Try sections with hero/banner display type
         const heroSection = homeSections.find(s => s.display_type === 'hero' || s.display_type === 'banner');
         if (heroSection?.movies?.[0]) {
           featured = heroSection.movies[0];
         } else {
-          // Fallback to top rated
           const topData = await listMovies({ sort_by: "rating", limit: 1, minimum_rating: 8 });
           if (topData.movies?.[0]) {
             featured = topData.movies[0];
@@ -247,14 +98,10 @@
       }
 
       if (featured) {
-        console.log('[Home] Featured movie:', featured.title);
-
-        // Fetch multiple IMDB images for Ken Burns slideshow
         if (featured.imdb_code) {
           const images = await getImdbImages(featured.imdb_code);
-          // Get horizontal images (good for backgrounds)
           const bgImages = images
-            .filter(img => img.width > img.height) // horizontal only
+            .filter(img => img.width > img.height)
             .filter(img => img.type === 'still_frame' || img.type === 'publicity' || img.type === 'production')
             .map(img => img.url)
             .slice(0, 5);
@@ -263,47 +110,36 @@
             heroBackgrounds = bgImages;
             featuredBackground = bgImages[0];
             currentBgIndex = 0;
-            console.log('[Home] Loaded', bgImages.length, 'background images');
-            // Start background rotation
             startHeroAutoplay();
           } else {
-            // Fallback to movie's default background
             featuredBackground = featured.background_image_original || featured.large_cover_image || null;
           }
-
         }
       }
 
-      // Map API sections to local arrays for display
+      // Map API sections to local arrays
       for (const section of homeSections) {
         if (!section.movies || section.display_type === 'hero' || section.display_type === 'banner') continue;
-
-        // Map by section type or id
         switch (section.type || section.id) {
           case 'recent':
           case 'recently_added':
             newReleases = section.movies;
-            newReleasesTotal = section.movies.length;
             break;
           case 'top_rated':
             topRated = section.movies;
             break;
         }
-
-        // Map by section id for custom sections
         if (section.id === 'trending' || section.id.includes('trending')) {
           trending = section.movies;
-          trendingTotal = section.movies.length;
         }
       }
 
-      // Fallback: If no API sections or missing data, load traditional way
+      // Fallback
       if (homeSections.length === 0 || !featured) {
-        console.log('[Home] Using fallback data loading');
         await loadFallbackContent();
       }
 
-      // Always load these additional sections (API might not have them)
+      // Genre rows
       if (configStore.isEnabled("movies") && (action.length === 0 || comedy.length === 0)) {
         const [actionData, comedyData, thrillerData, scifiData, dramaData] = await Promise.all([
           listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
@@ -319,36 +155,22 @@
         drama = dramaData.movies || [];
       }
 
-      // Load TV series for home row (non-blocking)
+      // Series row (non-blocking)
       if (configStore.isEnabled("series")) {
         listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc' })
           .then(data => { homeSeries = data.series || []; })
           .catch(err => console.warn('[Home] Failed to load series:', err));
       }
 
-      // Load live channels for home row (non-blocking)
-      if (configStore.isEnabled("channels")) {
-        listChannels({ limit: 20 })
-          .then(data => { homeChannels = data.channels || []; })
-          .catch(err => console.warn('[Home] Failed to load channels:', err));
-      }
-
-      // Reset retry count on success
       retryCount = 0;
       loadError = null;
     } catch (err) {
       console.error('[Home] Failed to load content:', err);
       loadError = "Unable to connect to server";
-
-      // Auto-retry with exponential backoff (max 30 seconds)
       const delay = Math.min(3000 * Math.pow(2, retryCount), 30000);
       retryCount += 1;
-      console.log(`[Home] Retrying in ${delay/1000}s (attempt ${retryCount})`);
-
       if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        loadHomeContent();
-      }, delay);
+      retryTimer = setTimeout(() => { loadHomeContent(); }, delay);
     } finally {
       loading = false;
     }
@@ -360,14 +182,10 @@
       listMovies({ sort_by: "rating", limit: 20, minimum_rating: 8 }),
       listMovies({ sort_by: "date_added", limit: 20 }),
     ]);
-
     trending = trendingData.movies || [];
-    trendingTotal = trendingData.movie_count || 0;
     topRated = topRatedData.movies || [];
     newReleases = newReleasesData.movies || [];
-    newReleasesTotal = newReleasesData.movie_count || 0;
 
-    // Enrich with local ratings
     const allMovies = [...trending, ...topRated, ...newReleases];
     const imdbCodes = [...new Set(allMovies.map(m => m.imdb_code).filter(Boolean))];
     if (imdbCodes.length > 0) {
@@ -382,24 +200,16 @@
       newReleases = newReleases.map(enrichMovie);
     }
 
-    // Feature a top rated movie if no hero from API
     if (!featured && topRated.length > 0) {
       featured = topRated[0];
     }
   }
 
-  // Hero background rotation (Ken Burns effect)
+  // Hero background rotation
   function startHeroAutoplay() {
     stopHeroAutoplay();
-    if (heroBackgrounds.length <= 1) {
-      console.log('[Hero] Only 1 background, no rotation needed');
-      return;
-    }
-
-    console.log('[Hero] Starting Ken Burns rotation with', heroBackgrounds.length, 'images');
-    heroInterval = setInterval(() => {
-      nextBackground();
-    }, 5000); // 5 seconds per image
+    if (heroBackgrounds.length <= 1) return;
+    heroInterval = setInterval(() => { nextBackground(); }, 5000);
   }
 
   function stopHeroAutoplay() {
@@ -411,18 +221,13 @@
 
   function nextBackground() {
     if (heroBackgrounds.length <= 1) return;
-
-    // Start transition
     bgTransitioning = true;
     prevBgIndex = currentBgIndex;
-
-    // After fade out, switch to next image
     setTimeout(() => {
       currentBgIndex = (currentBgIndex + 1) % heroBackgrounds.length;
       featuredBackground = heroBackgrounds[currentBgIndex];
       bgTransitioning = false;
-      console.log('[Hero] Background', currentBgIndex + 1, '/', heroBackgrounds.length);
-    }, 1000); // 1 second crossfade
+    }, 1000);
   }
 
   function manualRetry() {
@@ -431,581 +236,15 @@
     loadHomeContent();
   }
 
-  async function loadChannels() {
-    if (iptvChannels.length > 0) return; // Already loaded
-
-    channelsLoading = true;
-    channelsError = null;
-
-    try {
-      // Check cache first (1 hour TTL for channels)
-      if (browser) {
-        const cached = localStorage.getItem('iptv_data_v4');
-        const cacheTime = localStorage.getItem('iptv_data_v4_time');
-        const oneHour = 60 * 60 * 1000;
-
-        if (cached && cacheTime && Date.now() - parseInt(cacheTime) < oneHour) {
-          console.log('[IPTV] Loading from cache');
-          const data = JSON.parse(cached);
-          iptvChannels = data.channels;
-          iptvCountries = data.countries;
-          iptvCategories = data.categories;
-          updateChannelGroups();
-          channelsLoading = false;
-          return;
-        }
-      }
-
-      console.log('[IPTV] Fetching from API');
-
-      // Fetch channels, countries, and categories in parallel
-      const [channelsData, countries, categories] = await Promise.all([
-        listChannels({ limit: 10000 }),
-        getChannelCountries(),
-        getChannelCategories()
-      ]);
-
-      iptvChannels = (channelsData.channels || []).map(ch => ({
-        id: ch.id,
-        name: ch.name,
-        country: ch.country || '',
-        languages: ch.languages || [],
-        categories: ch.categories || [],
-        logo: ch.logo,
-        url: ch.stream_url
-      }));
-      iptvCountries = countries.map(c => ({ code: c.code, name: c.name, flag: c.flag || '' }));
-      iptvCategories = categories.map(c => ({ id: c.id, name: c.name }));
-      updateChannelGroups();
-
-      // Cache for 1 hour
-      if (browser) {
-        localStorage.setItem('iptv_data_v4', JSON.stringify({
-          channels: iptvChannels,
-          countries: iptvCountries,
-          categories: iptvCategories
-        }));
-        localStorage.setItem('iptv_data_v4_time', Date.now().toString());
-      }
-
-      console.log(`[IPTV] Loaded ${iptvChannels.length} channels from API`);
-    } catch (err) {
-      console.error('[IPTV] Failed to load channels:', err);
-      channelsError = 'Failed to load channels. Is the server running?';
-    } finally {
-      channelsLoading = false;
-    }
-  }
-
-  function updateChannelGroups() {
-    if (channelGroupBy === 'country') {
-      // Get unique countries that have channels
-      const countrySet = new Set(iptvChannels.map(ch => ch.country));
-      const countriesWithChannels = iptvCountries.filter(c => countrySet.has(c.code));
-      channelGroups = countriesWithChannels.map(c => c.code).sort((a, b) => {
-        const nameA = iptvCountries.find(c => c.code === a)?.name || a;
-        const nameB = iptvCountries.find(c => c.code === b)?.name || b;
-        return nameA.localeCompare(nameB);
-      });
-    } else {
-      // Get unique categories that have channels
-      const catSet = new Set(iptvChannels.flatMap(ch => ch.categories));
-      channelGroups = iptvCategories
-        .filter(c => catSet.has(c.id))
-        .map(c => c.id)
-        .sort((a, b) => {
-          const nameA = iptvCategories.find(c => c.id === a)?.name || a;
-          const nameB = iptvCategories.find(c => c.id === b)?.name || b;
-          return nameA.localeCompare(nameB);
-        });
-    }
-  }
-
-  function getGroupName(code: string): string {
-    if (channelGroupBy === 'country') {
-      const country = iptvCountries.find(c => c.code === code);
-      return country ? `${country.flag} ${country.name}` : code;
-    } else {
-      const cat = iptvCategories.find(c => c.id === code);
-      return cat?.name || code;
-    }
-  }
-
-  function getChannelsInGroup(groupCode: string): IPTVChannel[] {
-    if (channelGroupBy === 'country') {
-      return iptvChannels.filter(ch => ch.country === groupCode);
-    } else {
-      return iptvChannels.filter(ch => ch.categories.includes(groupCode));
-    }
-  }
-
-  function switchGroupBy(mode: 'country' | 'category' | 'search') {
-    channelGroupBy = mode;
-    selectedGroup = null;
-    if (mode !== 'search') {
-      updateChannelGroups();
-      // Focus first group after DOM update
-      tick().then(() => setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100));
-    } else {
-      channelSearchQuery = '';
-      channelSearchResults = [];
-    }
-  }
-
-  async function handleChannelSearch() {
-    if (!channelSearchQuery.trim()) return;
-    channelSearchLoading = true;
-    try {
-      const data = await searchChannels(channelSearchQuery, 1, 50);
-      channelSearchResults = data.channels || [];
-    } catch (err) {
-      console.error('[Search] Channel search failed:', err);
-      channelSearchResults = [];
-    } finally {
-      channelSearchLoading = false;
-    }
-  }
-
-  async function handleYearSelect(year: number) {
-    selectedYear = year;
-    yearLoading = true;
-    try {
-      const data = await listMovies({ year, sort_by: 'rating', limit: 50 });
-      yearMovies = data.movies || [];
-    } catch (err) {
-      console.error('Failed to load year movies:', err);
-    } finally {
-      yearLoading = false;
-      await tick();
-      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
-    }
-  }
-
-  async function handleCuratedSelect(slug: string) {
-    curatedList = slug;
-    curatedLoading = true;
-    try {
-      const list = await getCuratedList(slug);
-      curatedMovies = list?.movies || [];
-    } catch (err) {
-      console.error('Failed to load curated list:', err);
-    } finally {
-      curatedLoading = false;
-      await tick();
-      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
-    }
-  }
-
-  async function loadCuratedLists() {
-    if (curatedLists.length > 0) return;
-    curatedListsLoading = true;
-    try {
-      curatedLists = await getCuratedLists();
-      // Auto-select first list if available
-      if (curatedLists.length > 0 && !curatedList) {
-        handleCuratedSelect(curatedLists[0].slug);
-      }
-    } catch (err) {
-      console.error('Failed to load curated lists:', err);
-    } finally {
-      curatedListsLoading = false;
-    }
-  }
-
-  function switchMovieBrowseMode(mode: 'genre' | 'year' | 'curated' | 'search') {
-    movieBrowseMode = mode;
-    selectedYear = null;
-    selectedGenre = null;
-    if (mode === 'curated') {
-      loadCuratedLists();
-    }
-    if (mode === 'search') {
-      movieSearchQuery = '';
-      movieSearchResults = [];
-    }
-  }
-
-  async function handleMovieSearch() {
-    const query = movieSearchQuery.trim();
-    if (!query) return;
-    movieSearchLoading = true;
-    console.log('[MovieSearch] Searching for:', query);
-    try {
-      // Use listMovies with query_term - same as main search
-      const data = await listMovies({ query_term: query, limit: 50, page: 1 });
-      console.log('[MovieSearch] Response:', data);
-      movieSearchResults = data?.movies || [];
-      console.log('[MovieSearch] Found:', movieSearchResults.length, 'movies');
-    } catch (err) {
-      console.error('[MovieSearch] Failed:', err);
-      movieSearchResults = [];
-    } finally {
-      movieSearchLoading = false;
-    }
-  }
-
-  async function selectGroup(group: string) {
-    selectedGroup = group;
-    await tick();
-    setTimeout(() => { makeFocusable(); setFocus('.channel-list-item'); }, 100);
-  }
-
-  async function deselectGroup() {
-    selectedGroup = null;
-    await tick();
-    setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100);
-  }
-
-  function playChannel(channel: IPTVChannel) {
-    if (channel.url) {
-      // Store current channel list for up/down switching in player
-      const group = selectedGroup;
-      const channels = group ? getChannelsInGroup(group) : iptvChannels;
-      const channelList = channels.filter(ch => ch.url).map(ch => ({ name: ch.name, url: ch.url! }));
-      const idx = channelList.findIndex(ch => ch.url === channel.url);
-      sessionStorage.setItem('liveChannelList', JSON.stringify(channelList));
-      goto(`/live?url=${encodeURIComponent(channel.url)}&title=${encodeURIComponent(channel.name)}&chIdx=${idx}`);
-    }
-  }
-
-  async function loadTVSeries() {
-    if (tvSeries.length > 0) return; // Already loaded
-
-    tvSeriesLoading = true;
-    try {
-      const [allData, topData, ongoingData] = await Promise.all([
-        listSeries({ limit: 50, sort_by: 'date_added', order_by: 'desc' }),
-        listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc', minimum_rating: 8 }),
-        listSeries({ limit: 20, status: 'Continuing', sort_by: 'rating', order_by: 'desc' }),
-      ]);
-
-      tvSeries = allData.series || [];
-      tvSeriesTotal = allData.series_count || 0;
-      tvSeriesTopRated = topData.series || [];
-      tvSeriesOngoing = ongoingData.series || [];
-    } catch (err) {
-      console.error('[TV] Failed to load series:', err);
-      tvSeries = [];
-    } finally {
-      tvSeriesLoading = false;
-    }
-  }
-
-  async function loadMoreTVSeries() {
-    if (tvSeriesLoadingMore) return;
-    tvSeriesLoadingMore = true;
-    tvSeriesPage += 1;
-
-    try {
-      const data = await listSeries({ limit: 50, page: tvSeriesPage, sort_by: 'date_added', order_by: 'desc' });
-      tvSeries = [...tvSeries, ...(data.series || [])];
-    } catch {
-      tvSeriesPage -= 1;
-    } finally {
-      tvSeriesLoadingMore = false;
-    }
-  }
-
-  function switchTVBrowseMode(mode: 'curated' | 'genre' | 'network' | 'search') {
-    tvBrowseMode = mode;
-    if (mode === 'search') {
-      tvSearchQuery = '';
-      tvSearchResults = [];
-    }
-  }
-
-  async function handleTVSearch() {
-    if (!tvSearchQuery.trim()) return;
-    tvSearchLoading = true;
-    try {
-      const data = await searchSeries(tvSearchQuery, 1, 50);
-      tvSearchResults = data.series || [];
-    } catch (err) {
-      console.error('[Search] TV search failed:', err);
-      tvSearchResults = [];
-    } finally {
-      tvSearchLoading = false;
-    }
-  }
-
-  async function handleTVCuratedSelect(listId: string) {
-    tvCuratedList = listId;
-    tvCuratedLoading = true;
-    tvCuratedSeries = [];
-
-    const list = tvCuratedLists.find(l => l.id === listId);
-    if (!list) {
-      tvCuratedLoading = false;
-      return;
-    }
-
-    try {
-      const data = await listSeries({ limit: 50, ...list.filter });
-      tvCuratedSeries = data.series || [];
-    } catch (err) {
-      console.error('Failed to load curated series:', err);
-    } finally {
-      tvCuratedLoading = false;
-    }
-  }
-
-  async function handleTVGenreSelect(genre: string) {
-    tvSelectedGenre = genre;
-    tvGenreLoading = true;
-    tvGenreSeries = [];
-
-    try {
-      const data = await listSeries({ limit: 50, genre: genre });
-      tvGenreSeries = data.series || [];
-    } catch (err) {
-      console.error('Failed to load genre series:', err);
-    } finally {
-      tvGenreLoading = false;
-    }
-  }
-
-  async function handleTVNetworkSelect(network: string) {
-    tvSelectedNetwork = network;
-    tvNetworkLoading = true;
-    tvNetworkSeries = [];
-
-    try {
-      const data = await listSeries({ limit: 50, network: network });
-      tvNetworkSeries = data.series || [];
-    } catch (err) {
-      console.error('Failed to load network series:', err);
-    } finally {
-      tvNetworkLoading = false;
-    }
-  }
-
-  function handleSeriesClick(series: Series) {
-    goto(`/series/${series.id}`);
-  }
-
-  async function handleNavClick(nav: string) {
-    activeNav = nav;
-    showSearch = nav === "search";
-    selectedGenre = null;
-    selectedGroup = null;
-
-    if (nav === "home") {
-      searchQuery = "";
-      searchResults = [];
-      // Scroll to top when going home
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      // Always refresh content when going to home
-      await loadHomeContent();
-    }
-
-    if (nav === "live") {
-      await loadChannels();
-    }
-
-    if (nav === "movies") {
-      await loadCuratedLists();
-    }
-
-    if (nav === "tv") {
-      await loadTVSeries();
-    }
-
-    // Auto-focus first content element after nav change
-    setTimeout(async () => {
-      await tick();
-      makeFocusable();
-      if (nav === "search") {
-        setFocus('.search-input');
-      } else if (nav === "live") {
-        setFocus('.genre-card');
-      } else if (nav === "movies") {
-        setFocus('.curated-tab, .movie-card');
-      } else if (nav === "tv") {
-        setFocus('.toggle-btn.tv-toggle, .series-card, .movie-card');
-      } else if (nav === "home") {
-        setFocus('.featured-actions button, .movie-card');
-      }
-    }, 200);
-  }
-
-  function handleSearchInput() {
-    // Clear previous timer
-    clearTimeout(searchDebounceTimer);
-
-    if (!searchQuery.trim()) {
-      searchSuggestions = [];
-      searchResults = [];
-      showSuggestions = false;
-      return;
-    }
-
-    // Show suggestions after short delay (debounce)
-    searchDebounceTimer = setTimeout(async () => {
-      searchLoading = true;
-      showSuggestions = true;
-      try {
-        const data = await listMovies({ query_term: searchQuery, limit: 8 });
-        searchSuggestions = data.movies || [];
-      } catch {
-        searchSuggestions = [];
-      } finally {
-        searchLoading = false;
-      }
-    }, 300);
-  }
-
-  async function handleSearchSubmit() {
-    clearTimeout(searchDebounceTimer);
-    showSuggestions = false;
-
-    if (!searchQuery.trim()) {
-      searchResults = [];
-      return;
-    }
-
-    searchLoading = true;
-    searchPage = 1;
-    try {
-      const data = await listMovies({ query_term: searchQuery, limit: 20, page: 1 });
-      searchResults = data.movies || [];
-      searchTotal = data.movie_count || 0;
-    } catch {
-      searchResults = [];
-      searchTotal = 0;
-    } finally {
-      searchLoading = false;
-    }
-  }
-
-  function selectSuggestion(movie: Movie) {
-    showSuggestions = false;
-    goto(`/movie/${movie.id}`);
-  }
-
-  async function handleGenreSelect(genre: string) {
-    selectedGenre = genre;
-    activeNav = "movies";
-    genreLoading = true;
-    genrePage = 1;
-
-    try {
-      const data = await listMovies({ genre, sort_by: "rating", limit: 20, page: 1 });
-      genreMovies = data.movies || [];
-      genreTotal = data.movie_count || 0;
-    } catch {
-      genreMovies = [];
-      genreTotal = 0;
-    } finally {
-      genreLoading = false;
-      await tick();
-      setTimeout(() => { makeFocusable(); setFocus('.movie-card'); }, 100);
-    }
-  }
-
-  async function loadMoreGenre() {
-    if (genreLoadingMore || !selectedGenre) return;
-    genreLoadingMore = true;
-    genrePage += 1;
-
-    try {
-      const data = await listMovies({ genre: selectedGenre, sort_by: "rating", limit: 20, page: genrePage });
-      genreMovies = [...genreMovies, ...(data.movies || [])];
-    } catch {
-      genrePage -= 1;
-    } finally {
-      genreLoadingMore = false;
-    }
-  }
-
-  async function loadMoreTrending() {
-    if (trendingLoadingMore) return;
-    trendingLoadingMore = true;
-    trendingPage += 1;
-
-    try {
-      const data = await listMovies({ sort_by: "download_count", limit: 20, page: trendingPage });
-      trending = [...trending, ...(data.movies || [])];
-    } catch {
-      trendingPage -= 1;
-    } finally {
-      trendingLoadingMore = false;
-    }
-  }
-
-  async function loadMoreNewReleases() {
-    if (newReleasesLoadingMore) return;
-    newReleasesLoadingMore = true;
-    newReleasesPage += 1;
-
-    try {
-      const data = await listMovies({ sort_by: "date_added", limit: 20, page: newReleasesPage });
-      newReleases = [...newReleases, ...(data.movies || [])];
-    } catch {
-      newReleasesPage -= 1;
-    } finally {
-      newReleasesLoadingMore = false;
-    }
-  }
-
-  async function loadMoreSearch() {
-    if (searchLoadingMore || !searchQuery.trim()) return;
-    searchLoadingMore = true;
-    searchPage += 1;
-
-    try {
-      const data = await listMovies({ query_term: searchQuery, limit: 20, page: searchPage });
-      searchResults = [...searchResults, ...(data.movies || [])];
-    } catch {
-      searchPage -= 1;
-    } finally {
-      searchLoadingMore = false;
-    }
-  }
-
-  function toggleCountryFav(groupCode: string) {
-    const country = iptvCountries.find(c => c.code === groupCode);
-    if (country) {
-      favoritesStore.toggleCountry({ code: country.code, name: country.name, flag: country.flag });
-    }
-  }
-
-  function toggleChannelFav(channel: IPTVChannel | Channel) {
-    const ch: Channel = {
-      id: 'id' in channel ? channel.id : '',
-      name: channel.name,
-      logo: channel.logo,
-      stream_url: 'stream_url' in channel ? channel.stream_url : ('url' in channel ? (channel as IPTVChannel).url : undefined),
-      country: channel.country,
-      categories: channel.categories,
-      languages: channel.languages,
-    };
-    favoritesStore.toggleChannel(ch);
-  }
-
   function handlePlay() {
     if (featured) {
-      console.log('[Hero Play] Featured ID:', featured.id, 'Title:', featured.title);
-      goto(`/movie/${featured.id}`);
+      goto(`/movies/${featured.id}`);
     }
   }
 
   function handleMoreInfo() {
     if (featured) {
-      goto(`/movie/${featured.id}`);
-    }
-  }
-
-  function getRatingDisplay(rating: number): string {
-    if (!rating || rating === 0) return "N/A";
-    return rating.toFixed(1);
-  }
-
-  // Special handling for search input - go to sidebar on left arrow at start
-  function handleSearchInputKeydown(e: KeyboardEvent) {
-    const target = e.target as HTMLInputElement;
-    if (e.key === "ArrowLeft" && target.selectionStart === 0) {
-      e.preventDefault();
-      setFocus('.nav-item.active');
+      goto(`/movies/${featured.id}`);
     }
   }
 </script>
@@ -1015,10 +254,8 @@
 </svelte:head>
 
 <div class="app">
-  <!-- Left Sidebar -->
-  <Sidebar {activeNav} onNavClick={handleNavClick} />
+  <Sidebar />
 
-  <!-- Main Content -->
   <main class="main-content">
     {#if loading && !loadError}
       <div class="loading-page">
@@ -1036,533 +273,48 @@
           Retry Now
         </button>
       </div>
-    {:else if showSearch}
-      <!-- Search View -->
-      <div class="search-view">
-        <div class="search-header">
-          <h1>Search</h1>
-          <div class="search-box">
-            <div class="search-input-container">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-              </svg>
-              <input
-                type="text"
-                placeholder="Search movies..."
-                bind:value={searchQuery}
-                oninput={handleSearchInput}
-                onkeydown={(e) => { handleSearchInputKeydown(e); if (e.key === 'Enter') handleSearchSubmit(); }}
-                onfocus={() => searchQuery && (showSuggestions = true)}
-                class="search-input"
-              />
-              {#if searchQuery}
-                <button class="clear-btn" onclick={() => { searchQuery = ""; searchResults = []; searchSuggestions = []; showSuggestions = false; }} aria-label="Clear search">
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                  </svg>
-                </button>
-              {/if}
-            </div>
-
-            <!-- Live Suggestions Dropdown -->
-            {#if showSuggestions && searchQuery}
-              <div class="search-suggestions">
-                {#if searchLoading}
-                  <div class="suggestion-loading">Searching...</div>
-                {:else if searchSuggestions.length === 0}
-                  <div class="suggestion-empty">No results for "{searchQuery}"</div>
-                {:else}
-                  {#each searchSuggestions as movie (movie.id)}
-                    <button
-                      class="suggestion-item"
-                      onclick={() => selectSuggestion(movie)}
-                      tabindex="0"
-                    >
-                      <img
-                        src={movie.small_cover_image}
-                        alt=""
-                        class="suggestion-poster"
-                      />
-                      <div class="suggestion-info">
-                        <span class="suggestion-title">{movie.title}</span>
-                        <span class="suggestion-meta">{movie.year} • {movie.rating ? movie.rating.toFixed(1) : 'N/A'}</span>
-                      </div>
-                    </button>
-                  {/each}
-                  <button class="suggestion-more" onclick={handleSearchSubmit} tabindex="0">
-                    See all results for "{searchQuery}"
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        </div>
-
-        {#if searchResults.length > 0}
-          <div class="search-results">
-            <p class="results-count">{searchResults.length} of {searchTotal} results for "{searchQuery}"</p>
-            <MovieGrid
-              movies={searchResults}
-              loading={false}
-              error={null}
-              hasMore={searchResults.length < searchTotal}
-              loadingMore={searchLoadingMore}
-              onLoadMore={loadMoreSearch}
-            />
-          </div>
-        {:else if !searchQuery}
-          <div class="search-genres">
-            <h2>Browse by Genre</h2>
-            <div class="genre-grid">
-              {#each genres as genre (genre)}
-                <button class="genre-card" onclick={() => handleGenreSelect(genre)}>
-                  {genre}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </div>
-    {:else if selectedGenre}
-      <!-- Genre View -->
-      <div class="genre-view">
-        <div class="genre-header">
-          <button class="back-btn" onclick={() => { selectedGenre = null; activeNav = "home"; }} aria-label="Go back">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
-          </button>
-          <h1>{selectedGenre} Movies</h1>
-        </div>
-        <MovieGrid
-          movies={genreMovies}
-          loading={genreLoading}
-          error={null}
-          hasMore={genreMovies.length < genreTotal}
-          loadingMore={genreLoadingMore}
-          onLoadMore={loadMoreGenre}
-        />
-      </div>
-    {:else if activeNav === "tv"}
-      <!-- TV Series View -->
-      <div class="category-view">
-        <div class="tv-header">
-          <h1 class="category-title">Browse TV Series</h1>
-          <div class="group-toggle">
-            <button
-              class="toggle-btn tv-toggle"
-              class:active={tvBrowseMode === 'curated'}
-              onclick={() => switchTVBrowseMode('curated')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-              </svg>
-              Curated
-            </button>
-            <button
-              class="toggle-btn tv-toggle"
-              class:active={tvBrowseMode === 'genre'}
-              onclick={() => switchTVBrowseMode('genre')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
-              </svg>
-              Genre
-            </button>
-            <button
-              class="toggle-btn tv-toggle"
-              class:active={tvBrowseMode === 'network'}
-              onclick={() => switchTVBrowseMode('network')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-              </svg>
-              Network
-            </button>
-            <button
-              class="toggle-btn tv-toggle"
-              class:active={tvBrowseMode === 'search'}
-              onclick={() => switchTVBrowseMode('search')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-              </svg>
-              Search
-            </button>
-          </div>
-        </div>
-
-        {#if tvBrowseMode === 'curated'}
-          <!-- Curated Lists -->
-          <div class="curated-tabs tv-curated">
-            {#each tvCuratedLists as list (list.id)}
-              <button
-                class="curated-tab tv-tab"
-                class:active={tvCuratedList === list.id}
-                onclick={() => handleTVCuratedSelect(list.id)}
-              >
-                {list.name}
-              </button>
-            {/each}
-          </div>
-          {#if tvCuratedLoading}
-            <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
-          {:else if tvCuratedSeries.length > 0}
-            <SeriesGrid series={tvCuratedSeries} loading={false} error={null} />
-          {:else if tvSeriesLoading}
-            <div class="loading-inline">
-              <div class="spinner tv-spinner"></div>
-              <p>Loading series...</p>
-            </div>
-          {:else}
-            <SeriesGrid
-              series={tvCuratedList === 'top' ? tvSeriesTopRated : tvCuratedList === 'ongoing' ? tvSeriesOngoing : tvSeries}
-              loading={false}
-              error={null}
-              hasMore={tvCuratedList !== 'top' && tvCuratedList !== 'ongoing' && tvSeries.length < tvSeriesTotal}
-              loadingMore={tvSeriesLoadingMore}
-              onLoadMore={tvCuratedList !== 'top' && tvCuratedList !== 'ongoing' ? loadMoreTVSeries : undefined}
-            />
-          {/if}
-        {:else if tvBrowseMode === 'genre'}
-          <!-- Genre Grid -->
-          {#if tvSelectedGenre}
-            <div class="genre-header">
-              <button class="back-btn" onclick={() => { tvSelectedGenre = null; tvGenreSeries = []; }} aria-label="Go back">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                </svg>
-              </button>
-              <h2>{tvSelectedGenre} Series</h2>
-            </div>
-            {#if tvGenreLoading}
-              <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
-            {:else}
-              <SeriesGrid series={tvGenreSeries} loading={false} error={null} />
-            {/if}
-          {:else}
-            <div class="genre-grid tv-genre-grid">
-              {#each tvGenres as genre (genre)}
-                <button class="genre-card tv-genre-card" onclick={() => handleTVGenreSelect(genre)}>
-                  {genre}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {:else if tvBrowseMode === 'network'}
-          <!-- Network Selection -->
-          {#if tvSelectedNetwork}
-            <div class="genre-header">
-              <button class="back-btn" onclick={() => { tvSelectedNetwork = null; tvNetworkSeries = []; }} aria-label="Go back">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                </svg>
-              </button>
-              <h2>{tvSelectedNetwork} Series</h2>
-            </div>
-            {#if tvNetworkLoading}
-              <div class="loading-spinner"><div class="spinner tv-spinner"></div></div>
-            {:else}
-              <SeriesGrid series={tvNetworkSeries} loading={false} error={null} />
-            {/if}
-          {:else}
-            <div class="network-grid">
-              {#each tvNetworks as network (network)}
-                <button class="network-card" onclick={() => handleTVNetworkSelect(network)}>
-                  {network}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {:else if tvBrowseMode === 'search'}
-          <!-- TV Series Search -->
-          <SearchSection type="tvshows" />
-        {/if}
-      </div>
-    {:else if activeNav === "live"}
-      <!-- Live Channels View -->
-      <div class="category-view">
-        <div class="live-header">
-          <h1 class="category-title">Live Channels</h1>
-          {#if iptvChannels.length > 0 && !selectedGroup}
-            <div class="group-toggle">
-              <button
-                class="toggle-btn"
-                class:active={channelGroupBy === 'country'}
-                onclick={() => switchGroupBy('country')}
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                </svg>
-                Countries
-              </button>
-              <button
-                class="toggle-btn"
-                class:active={channelGroupBy === 'category'}
-                onclick={() => switchGroupBy('category')}
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
-                </svg>
-                Categories
-              </button>
-              <button
-                class="toggle-btn"
-                class:active={channelGroupBy === 'search'}
-                onclick={() => switchGroupBy('search')}
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                </svg>
-                Search
-              </button>
-            </div>
-          {/if}
-        </div>
-        {#if channelsLoading}
-          <div class="loading-inline">
-            <div class="spinner"></div>
-            <p>Loading channels...</p>
-          </div>
-        {:else if channelsError}
-          <div class="error-inline">
-            <p>{channelsError}</p>
-            <button class="btn-retry" onclick={loadChannels}>Retry</button>
-          </div>
-        {:else if channelGroupBy === 'search'}
-          <!-- Channel Search -->
-          <SearchSection type="channels" channels={iptvChannels.map(ch => ({ id: ch.id, name: ch.name, logo: ch.logo, stream_url: ch.url, country: ch.country, categories: ch.categories, languages: ch.languages }))} />
-        {:else if selectedGroup}
-          <div class="genre-header">
-            <button class="back-btn" onclick={() => deselectGroup()} aria-label="Go back">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-              </svg>
-            </button>
-            <h2>{getGroupName(selectedGroup)}</h2>
-            <span class="group-channel-count">{getChannelsInGroup(selectedGroup).length} channels</span>
-          </div>
-          <div class="channels-list">
-            {#each getChannelsInGroup(selectedGroup) as channel (channel.id)}
-              <div class="channel-list-row">
-                <button class="channel-list-item" onclick={() => playChannel(channel)}>
-                  {#if channel.logo}
-                    <img src={channel.logo} alt="" class="channel-list-logo" />
-                  {:else}
-                    <div class="channel-list-logo-placeholder">
-                      <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                      </svg>
-                    </div>
-                  {/if}
-                  <span class="channel-list-name">{channel.name}</span>
-                  <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                </button>
-                <button
-                  class="fav-btn-inline"
-                  class:favorited={favoritesStore.isChannelFavorite(channel.id)}
-                  onclick={(e) => { e.stopPropagation(); toggleChannelFav(channel); }}
-                  aria-label="Toggle favorite"
-                >&#9829;</button>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="channels-info">{iptvChannels.length} channels available</p>
-          <div class="genre-grid">
-            {#each channelGroups as group (group)}
-              <div class="genre-card-wrapper">
-                <button class="genre-card" onclick={() => selectGroup(group)}>
-                  {getGroupName(group)}
-                  <span class="group-count">({getChannelsInGroup(group).length})</span>
-                </button>
-                <button
-                  class="fav-btn-inline"
-                  class:favorited={favoritesStore.isCountryFavorite(group)}
-                  onclick={(e) => { e.stopPropagation(); toggleCountryFav(group); }}
-                  aria-label="Toggle favorite"
-                >&#9829;</button>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else if activeNav === "new"}
-      <!-- New Releases View -->
-      <div class="category-view">
-        <h1 class="category-title">New Releases</h1>
-        <MovieGrid
-          movies={newReleases}
-          loading={false}
-          error={null}
-          hasMore={newReleases.length < newReleasesTotal}
-          loadingMore={newReleasesLoadingMore}
-          onLoadMore={loadMoreNewReleases}
-        />
-      </div>
-    {:else if activeNav === "movies"}
-      <!-- Movies Browse View -->
-      <div class="category-view">
-        <div class="movies-header">
-          <h1 class="category-title">Browse Movies</h1>
-          <div class="group-toggle">
-            <button
-              class="toggle-btn"
-              class:active={movieBrowseMode === 'curated'}
-              onclick={() => switchMovieBrowseMode('curated')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-              </svg>
-              Curated
-            </button>
-            <button
-              class="toggle-btn"
-              class:active={movieBrowseMode === 'genre'}
-              onclick={() => switchMovieBrowseMode('genre')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
-              </svg>
-              Genre
-            </button>
-            <button
-              class="toggle-btn"
-              class:active={movieBrowseMode === 'year'}
-              onclick={() => switchMovieBrowseMode('year')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM9 10H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm-8 4H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2z"/>
-              </svg>
-              Year
-            </button>
-            <button
-              class="toggle-btn"
-              class:active={movieBrowseMode === 'search'}
-              onclick={() => switchMovieBrowseMode('search')}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-              </svg>
-              Search
-            </button>
-          </div>
-        </div>
-
-        {#if movieBrowseMode === 'curated'}
-          <!-- Curated Lists -->
-          {#if curatedListsLoading}
-            <div class="loading-spinner"><div class="spinner"></div></div>
-          {:else if curatedLists.length === 0}
-            <p style="color: #888; text-align: center;">No curated lists available</p>
-          {:else}
-            <div class="curated-tabs">
-              {#each curatedLists as list (list.slug)}
-                <button
-                  class="curated-tab"
-                  class:active={curatedList === list.slug}
-                  onclick={() => handleCuratedSelect(list.slug)}
-                >
-                  {list.name}
-                </button>
-              {/each}
-            </div>
-            {#if curatedLoading}
-              <div class="loading-spinner"><div class="spinner"></div></div>
-            {:else}
-              <MovieGrid movies={curatedMovies} loading={false} error={null} />
-            {/if}
-          {/if}
-        {:else if movieBrowseMode === 'genre'}
-          <!-- Genre Grid -->
-          {#if selectedGenre}
-            <div class="genre-header">
-              <button class="back-btn" onclick={async () => { selectedGenre = null; await tick(); setTimeout(() => { makeFocusable(); setFocus('.genre-card'); }, 100); }} aria-label="Go back">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                </svg>
-              </button>
-              <h2>{selectedGenre} Movies</h2>
-            </div>
-            <MovieGrid
-              movies={genreMovies}
-              loading={genreLoading}
-              error={null}
-              hasMore={genreMovies.length < genreTotal}
-              loadingMore={genreLoadingMore}
-              onLoadMore={loadMoreGenre}
-            />
-          {:else}
-            <div class="genre-grid">
-              {#each genres as genre (genre)}
-                <button class="genre-card" onclick={() => handleGenreSelect(genre)}>
-                  {genre}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {:else if movieBrowseMode === 'year'}
-          <!-- Year Selection -->
-          {#if selectedYear}
-            <div class="genre-header">
-              <button class="back-btn" onclick={async () => { selectedYear = null; yearMovies = []; await tick(); setTimeout(() => { makeFocusable(); setFocus('.year-card'); }, 100); }} aria-label="Go back">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                </svg>
-              </button>
-              <h2>{selectedYear} Movies</h2>
-            </div>
-            {#if yearLoading}
-              <div class="loading-spinner"><div class="spinner"></div></div>
-            {:else}
-              <MovieGrid movies={yearMovies} loading={false} error={null} />
-            {/if}
-          {:else}
-            <div class="year-grid">
-              {#each years as year (year)}
-                <button class="year-card" onclick={() => handleYearSelect(year)}>
-                  {year}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {:else if movieBrowseMode === 'search'}
-          <!-- Movie Search -->
-          <SearchSection type="movies" />
-        {/if}
-      </div>
-    {:else if activeNav === "favorites"}
-      <!-- Favorites View -->
-      <div class="category-view">
-        <div class="favorites-header">
-          <h1 class="category-title">My List</h1>
-          {#if favoritesStore.count > 0}
-            <span class="favorites-count">{favoritesStore.count} movies</span>
-          {/if}
-        </div>
-        {#if favoritesStore.favorites.length === 0}
-          <div class="empty-state">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-            </svg>
-            <h2>Your list is empty</h2>
-            <p>Add movies to your list to watch them later</p>
-          </div>
-        {:else}
-          <MovieGrid movies={favoritesStore.favorites} loading={false} error={null} />
-        {/if}
-      </div>
     {:else}
-      <!-- Home View -->
+      <!-- Home Tab Bar -->
+      <div class="home-tabs">
+        <div class="group-toggle">
+          <button class="toggle-btn" class:active={homeTab === 'all'} onclick={() => homeTab = 'all'}>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+            </svg>
+            All
+          </button>
+          {#each configStore.getEnabledServices() as service (service.id)}
+            <button class="toggle-btn" class:active={homeTab === service.id}
+              onclick={() => homeTab = service.id}>
+              {#if service.icon === 'movie' || service.id === 'movies'}
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
+                </svg>
+              {:else if service.icon === 'tv' || service.id === 'series'}
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+                </svg>
+              {:else if service.icon === 'live' || service.id === 'channels'}
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 6h-7.59l3.29-3.29L16 2l-4 4-4-4-.71.71L10.59 6H3c-1.1 0-2 .89-2 2v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.11-.9-2-2-2zm0 14H3V8h18v12z"/>
+                </svg>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+              {/if}
+              {service.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
       {#if featured && (homeTab === 'all' || homeTab === 'movies')}
         <div
           class="hero"
           onmouseenter={stopHeroAutoplay}
           onmouseleave={startHeroAutoplay}
         >
-          <!-- Dual-layer background for crossfade -->
           {#if heroBackgrounds.length > 1}
             <div
               class="hero-bg hero-bg-back"
@@ -1613,13 +365,13 @@
               {featured.summary || featured.description_full || featured.synopsis || "A thrilling movie experience awaits you."}
             </p>
             <div class="hero-buttons">
-              <button class="btn-play" onclick={handlePlay} onfocus={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+              <button class="btn-play" onclick={handlePlay} onfocus={() => setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50)}>
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z"/>
                 </svg>
                 Play
               </button>
-              <button class="btn-info" onclick={handleMoreInfo} onfocus={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+              <button class="btn-info" onclick={handleMoreInfo} onfocus={() => setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50)}>
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
                 </svg>
@@ -1627,27 +379,16 @@
               </button>
             </div>
           </div>
-
         </div>
       {/if}
 
-      <!-- Home Tab Bar -->
-      <div class="home-tabs">
-        <button class="home-tab" class:active={homeTab === 'all'} onclick={() => homeTab = 'all'}>All</button>
-        {#each configStore.getEnabledServices() as service (service.id)}
-          <button class="home-tab" class:active={homeTab === service.id}
-            onclick={() => homeTab = service.id}>{service.label}</button>
-        {/each}
-      </div>
-
-      <!-- Service-aware content sections (filtered by tab) -->
+      <!-- Content rows -->
       <div class="content">
         {#if homeTab === 'channels'}
           <LiveTVFavoritesSection />
         {:else}
           {#each configStore.getEnabledServices() as service (service.id)}
             {#if service.id === "movies" && (homeTab === 'all' || homeTab === 'movies')}
-              <!-- Dynamic sections from API (excludes hero/banner) -->
               {#each homeSections.filter(s => s.display_type !== 'hero' && s.display_type !== 'banner' && s.movies && s.movies.length > 0) as section}
                 {#if section.display_type === 'top10'}
                   <Top10Row title={section.title} movies={section.movies || []} sectionId={section.id} />
@@ -1656,14 +397,12 @@
                 {/if}
               {/each}
 
-              <!-- Fallback sections if no API sections loaded -->
               {#if homeSections.filter(s => s.display_type !== 'hero').length === 0}
                 <MovieRow title="Trending Now" movies={trending} />
                 <MovieRow title="Top Rated" movies={topRated} />
                 <MovieRow title="New Releases" movies={newReleases} />
               {/if}
 
-              <!-- Genre sections -->
               {#if action.length > 0}
                 <MovieRow title="Action" movies={action} />
               {/if}
@@ -1700,15 +439,7 @@
     overflow: hidden;
   }
 
-  /* TV Remote focus styles */
-  :global(*:focus) {
-    outline: none;
-  }
-
-  :global(*:focus-visible:not(.movie-card)) {
-    outline: 3px solid #e50914 !important;
-    outline-offset: 2px;
-  }
+  /* Focus styles handled by +layout.svelte globally */
 
   .app {
     display: flex;
@@ -1719,7 +450,6 @@
     overflow: hidden;
   }
 
-  /* Main Content - scrollable area */
   .main-content {
     flex: 1;
     margin-left: 70px;
@@ -1733,9 +463,8 @@
   /* Hero */
   .hero {
     position: relative;
-    height: 50vh;
-    min-height: 300px;
-    max-height: 500px;
+    height: 85vh;
+    min-height: 400px;
     display: flex;
     align-items: flex-end;
     overflow: hidden;
@@ -1802,7 +531,6 @@
 
   .hero-year {
     color: #fff;
-    font-weight: 500;
   }
 
   .hero-rating {
@@ -1837,9 +565,11 @@
   .hero-buttons {
     display: flex;
     gap: 10px;
+    scroll-margin-top: 80vh;
   }
 
   .btn-play, .btn-info {
+    scroll-margin-top: 80vh;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1890,12 +620,12 @@
     height: 20px;
   }
 
-  /* Hero background layers for crossfade */
+  /* Hero background layers */
   .hero-bg {
     position: absolute;
     inset: 0;
     background-size: cover;
-    background-position: center top;
+    background-position: center center;
   }
 
   .hero-bg-back {
@@ -1914,100 +644,54 @@
 
   /* Home Tab Bar */
   .home-tabs {
-    position: relative;
-    z-index: 10;
-    display: flex;
-    gap: 8px;
-    padding: 0 40px;
-    margin-top: -5px;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
+    position: fixed;
+    top: 12px;
+    right: 20px;
+    z-index: 100;
   }
 
-  .home-tab {
-    padding: 6px 16px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 20px;
-    color: #aaa;
+  .group-toggle {
+    display: flex;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px;
+    border-radius: 8px;
+  }
+
+  .toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #888;
     font-size: 0.8rem;
     font-weight: 500;
-    font-family: inherit;
     cursor: pointer;
     transition: all 0.2s ease;
   }
 
-  .home-tab:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
+  .toggle-btn svg {
+    width: 18px;
+    height: 18px;
   }
 
-  .home-tab.active {
+  .toggle-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .toggle-btn.active {
+    color: #fff;
     background: #e50914;
-    border-color: #e50914;
-    color: #fff;
   }
 
-  .home-tab:focus,
-  .home-tab:focus-visible {
+  .toggle-btn:focus,
+  .toggle-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
-  }
-
-  /* Favorite button inline */
-  .fav-btn-inline {
-    background: none;
-    border: none;
-    color: #555;
-    font-size: 1.2rem;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .fav-btn-inline:hover {
-    color: #e50914;
-    transform: scale(1.2);
-  }
-
-  .fav-btn-inline.favorited {
-    color: #e50914;
-  }
-
-  .fav-btn-inline:focus,
-  .fav-btn-inline:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.5);
-  }
-
-  /* Genre card wrapper for fav button */
-  .genre-card-wrapper {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .genre-card-wrapper .fav-btn-inline {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    font-size: 0.9rem;
-    padding: 2px 4px;
-    z-index: 2;
-  }
-
-  /* Channel list row with fav button */
-  .channel-list-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .channel-list-row .channel-list-item {
-    flex: 1;
   }
 
   /* Content */
@@ -2016,410 +700,6 @@
     margin-top: -10px;
     padding-bottom: 30px;
     z-index: 10;
-  }
-
-  /* Search View */
-  .search-view, .genre-view, .category-view {
-    padding: 20px 40px;
-  }
-
-  .search-header {
-    margin-bottom: 20px;
-  }
-
-  .search-header h1 {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin: 0 0 12px;
-  }
-
-  .search-input-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    max-width: 500px;
-  }
-
-  .search-input-container svg {
-    width: 20px;
-    height: 20px;
-    color: #888;
-    flex-shrink: 0;
-  }
-
-  .search-input {
-    flex: 1;
-    background: none;
-    border: none;
-    color: #fff;
-    font-size: 0.95rem;
-    font-family: inherit;
-    outline: none;
-  }
-
-  .search-input:focus {
-    outline: none;
-  }
-
-  .search-input-container:focus-within {
-    box-shadow: 0 0 0 3px #e50914;
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  .search-input::placeholder {
-    color: #666;
-  }
-
-  .clear-btn {
-    background: none;
-    border: none;
-    color: #888;
-    cursor: pointer;
-    padding: 4px;
-    display: flex;
-  }
-
-  .clear-btn:hover {
-    color: #fff;
-  }
-
-  .clear-btn svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  /* Search Suggestions */
-  .search-box {
-    position: relative;
-    max-width: 600px;
-  }
-
-  .search-suggestions {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: rgba(30, 30, 30, 0.98);
-    border-radius: 0 0 12px 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-top: none;
-    max-height: 350px;
-    overflow-y: auto;
-    z-index: 100;
-  }
-
-  .suggestion-loading,
-  .suggestion-empty {
-    padding: 16px 20px;
-    color: #888;
-    font-size: 0.95rem;
-  }
-
-  .suggestion-item {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    width: 100%;
-    padding: 10px 16px;
-    background: none;
-    border: none;
-    color: #fff;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.15s;
-  }
-
-  .suggestion-item:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .suggestion-item:focus,
-  .suggestion-item:focus-visible {
-    outline: none;
-    background: rgba(229, 9, 20, 0.4);
-    box-shadow: inset 0 0 0 2px #e50914;
-  }
-
-  .suggestion-poster {
-    width: 40px;
-    height: 60px;
-    object-fit: cover;
-    border-radius: 4px;
-    background: #333;
-  }
-
-  .suggestion-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .suggestion-title {
-    font-size: 1rem;
-    font-weight: 500;
-  }
-
-  .suggestion-meta {
-    font-size: 0.85rem;
-    color: #888;
-  }
-
-  .suggestion-more {
-    display: block;
-    width: 100%;
-    padding: 14px 16px;
-    background: none;
-    border: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e50914;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    text-align: center;
-    transition: background 0.15s;
-  }
-
-  .suggestion-more:hover {
-    background: rgba(229, 9, 20, 0.1);
-  }
-
-  .suggestion-more:focus,
-  .suggestion-more:focus-visible {
-    outline: none;
-    background: rgba(229, 9, 20, 0.3);
-    box-shadow: inset 0 0 0 2px #e50914;
-  }
-
-  .results-count {
-    font-size: 0.85rem;
-    color: #888;
-    margin: 0 0 12px;
-  }
-
-  .search-genres {
-    margin-top: 20px;
-  }
-
-  .search-genres h2 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 0 0 12px;
-  }
-
-  .movies-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .curated-tabs {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-
-  .curated-tab {
-    padding: 6px 14px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 20px;
-    color: #aaa;
-    font-size: 0.8rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .curated-tab:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
-  }
-
-  .curated-tab.active {
-    background: #e50914;
-    border-color: #e50914;
-    color: #fff;
-  }
-
-  .curated-tab:focus,
-  .curated-tab:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
-  }
-
-  .year-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 12px;
-  }
-
-  .year-card {
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    color: #fff;
-    font-size: 0.9rem;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: center;
-  }
-
-  .year-card:hover {
-    background: rgba(229, 9, 20, 0.3);
-    border-color: rgba(229, 9, 20, 0.5);
-    transform: scale(1.05);
-  }
-
-  .year-card:focus,
-  .year-card:focus-visible {
-    outline: none;
-    border-color: #e50914;
-    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
-  }
-
-  .loading-spinner {
-    display: flex;
-    justify-content: center;
-    padding: 30px 0;
-  }
-
-  .genre-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 10px;
-  }
-
-  .genre-card {
-    padding: 14px 12px;
-    background: linear-gradient(135deg, rgba(229, 9, 20, 0.3), rgba(229, 9, 20, 0.1));
-    border: 1px solid rgba(229, 9, 20, 0.3);
-    border-radius: 8px;
-    color: #fff;
-    font-size: 0.85rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: center;
-  }
-
-  .genre-card:hover {
-    background: linear-gradient(135deg, rgba(229, 9, 20, 0.5), rgba(229, 9, 20, 0.2));
-    border-color: #e50914;
-    transform: scale(1.02);
-  }
-
-  .genre-card:focus,
-  .genre-card:focus-visible {
-    outline: none;
-    border-color: #e50914;
-    box-shadow: 0 0 0 4px #e50914;
-    background: linear-gradient(135deg, rgba(229, 9, 20, 0.6), rgba(229, 9, 20, 0.3));
-    transform: scale(1.05);
-  }
-
-  .genre-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .genre-header h1 {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin: 0;
-  }
-
-  .back-btn {
-    width: 44px;
-    height: 44px;
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    border-radius: 50%;
-    color: #fff;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s ease;
-  }
-
-  .back-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  .back-btn:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
-  }
-
-  .back-btn svg {
-    width: 24px;
-    height: 24px;
-  }
-
-  .category-title {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin: 0 0 16px;
-  }
-
-  .favorites-header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .favorites-header .category-title {
-    margin: 0;
-  }
-
-  .favorites-count {
-    font-size: 0.85rem;
-    color: #888;
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 40px 30px;
-    text-align: center;
-  }
-
-  .empty-state svg {
-    width: 50px;
-    height: 50px;
-    color: #333;
-    margin-bottom: 16px;
-  }
-
-  .empty-state h2 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 0 0 8px;
-    color: #fff;
-  }
-
-  .empty-state p {
-    font-size: 0.85rem;
-    color: #888;
-    margin: 0;
   }
 
   /* Loading */
@@ -2440,9 +720,7 @@
   }
 
   @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
+    to { transform: rotate(360deg); }
   }
 
   /* Error page */
@@ -2503,339 +781,7 @@
     transform: scale(1.05);
   }
 
-  /* Coming soon */
-  .coming-soon {
-    color: #888;
-    font-size: 0.9rem;
-    text-align: center;
-    padding: 30px 20px;
-  }
-
-  /* Loading/error inline */
-  .loading-inline, .error-inline {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 30px 20px;
-    color: #888;
-  }
-
-  .channels-info {
-    color: #888;
-    margin-bottom: 12px;
-    font-size: 0.85rem;
-  }
-
-  /* Live header with toggle */
-  .live-header,
-  .tv-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .live-header .category-title,
-  .tv-header .category-title {
-    margin: 0;
-  }
-
-  .group-toggle {
-    display: flex;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 4px;
-    border-radius: 8px;
-  }
-
-  .toggle-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: #888;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .toggle-btn svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .toggle-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .toggle-btn.active {
-    color: #fff;
-    background: #e50914;
-  }
-
-  .toggle-btn:focus,
-  .toggle-btn:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
-  }
-
-  /* TV Series green theme */
-  .toggle-btn.tv-toggle.active {
-    background: #2ecc71;
-  }
-
-  .toggle-btn.tv-toggle:focus,
-  .toggle-btn.tv-toggle:focus-visible {
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
-  }
-
-  .curated-tab.tv-tab.active {
-    color: #fff;
-    background: #2ecc71;
-  }
-
-  .curated-tab.tv-tab:focus,
-  .curated-tab.tv-tab:focus-visible {
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
-    border-color: #2ecc71;
-  }
-
-  .spinner.tv-spinner {
-    border-color: rgba(46, 204, 113, 0.2);
-    border-top-color: #2ecc71;
-  }
-
-  .genre-card.tv-genre-card:hover {
-    background: rgba(46, 204, 113, 0.15);
-    border-color: #2ecc71;
-  }
-
-  .genre-card.tv-genre-card:focus,
-  .genre-card.tv-genre-card:focus-visible {
-    border-color: #2ecc71;
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
-  }
-
-  /* Network grid */
-  .network-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 10px;
-    margin-top: 12px;
-  }
-
-  .network-card {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: #fff;
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .network-card:hover {
-    background: rgba(46, 204, 113, 0.15);
-    border-color: #2ecc71;
-  }
-
-  .network-card:focus,
-  .network-card:focus-visible {
-    outline: none;
-    border-color: #2ecc71;
-    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.5);
-  }
-
-  .group-count {
-    font-size: 0.8rem;
-    color: #666;
-    margin-left: 8px;
-  }
-
-  /* Channels grid */
-  .channels-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 12px;
-    margin-top: 12px;
-  }
-
-  .channel-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .channel-card:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
-    transform: scale(1.02);
-  }
-
-  .channel-card:focus,
-  .channel-card:focus-visible {
-    outline: none;
-    border-color: #e50914;
-    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
-    transform: scale(1.05);
-  }
-
-  .channel-logo {
-    width: 80px;
-    height: 80px;
-    object-fit: contain;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-  }
-
-  .channel-logo-placeholder {
-    width: 80px;
-    height: 80px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: #666;
-  }
-
-  .channel-logo-placeholder svg {
-    width: 40px;
-    height: 40px;
-  }
-
-  .channel-name {
-    font-size: 0.95rem;
-    font-weight: 500;
-    text-align: center;
-    color: #fff;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
-  /* Channel list view */
-  .group-channel-count {
-    font-size: 0.9rem;
-    color: #888;
-    margin-left: auto;
-  }
-
-  .channels-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 20px;
-  }
-
-  .channel-list-item {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid transparent;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    text-align: left;
-  }
-
-  .channel-list-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .channel-list-item:focus,
-  .channel-list-item:focus-visible {
-    outline: none;
-    background: rgba(229, 9, 20, 0.2);
-    border-color: #e50914;
-  }
-
-  .channel-list-logo {
-    width: 48px;
-    height: 48px;
-    object-fit: contain;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    flex-shrink: 0;
-  }
-
-  .channel-list-logo-placeholder {
-    width: 48px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    color: #666;
-    flex-shrink: 0;
-  }
-
-  .channel-list-logo-placeholder svg {
-    width: 24px;
-    height: 24px;
-  }
-
-  .channel-list-name {
-    flex: 1;
-    font-size: 1rem;
-    font-weight: 500;
-    color: #fff;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .channel-play-icon {
-    width: 24px;
-    height: 24px;
-    color: #888;
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-
-  .channel-list-item:hover .channel-play-icon,
-  .channel-list-item:focus .channel-play-icon {
-    opacity: 1;
-    color: #e50914;
-  }
-
   /* Responsive */
-  @media (max-width: 1200px) {
-    .hero-content {
-      padding: 0 40px 30px;
-    }
-
-    .search-view, .genre-view, .category-view {
-      padding: 20px 40px;
-    }
-  }
-
   @media (max-width: 900px) {
     .main-content {
       margin-left: 60px;
@@ -2851,10 +797,6 @@
     .hero-title {
       font-size: 1.6rem;
     }
-
-    .search-view, .genre-view, .category-view {
-      padding: 16px 32px;
-    }
   }
 
   @media (max-width: 600px) {
@@ -2863,8 +805,8 @@
     }
 
     .hero {
-      height: 45vh;
-      min-height: 250px;
+      height: 70vh;
+      min-height: 300px;
     }
 
     .hero-content {
@@ -2878,91 +820,5 @@
     .content {
       margin-top: 0;
     }
-
-    .search-view, .genre-view, .category-view {
-      padding: 16px 20px;
-    }
-
-    .genre-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  /* Inline Search Styles */
-  .search-section {
-    padding: 12px 0;
-  }
-
-  .inline-search-form {
-    display: flex;
-    gap: 8px;
-    max-width: 400px;
-    margin-bottom: 12px;
-  }
-
-  .inline-search-input {
-    flex: 1;
-    padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    color: #fff;
-    font-size: 0.85rem;
-    transition: all 0.2s ease;
-  }
-
-  .inline-search-input:focus {
-    outline: none;
-    border-color: #e50914;
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  .inline-search-input::placeholder {
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .inline-search-btn {
-    padding: 8px 14px;
-    background: #e50914;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s ease;
-  }
-
-  .inline-search-btn:hover {
-    background: #f40612;
-  }
-
-  .inline-search-btn:disabled {
-    background: #666;
-    cursor: not-allowed;
-  }
-
-  .inline-search-btn svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .spinner.small {
-    width: 20px;
-    height: 20px;
-  }
-
-  .search-results-count {
-    color: #888;
-    margin-bottom: 10px;
-    font-size: 0.8rem;
-  }
-
-  .no-results {
-    color: #888;
-    text-align: center;
-    padding: 20px 0;
-    font-size: 0.9rem;
   }
 </style>

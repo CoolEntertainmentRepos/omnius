@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Channel } from "$lib/api/types";
   import { goto } from "$app/navigation";
+  import ContextMenu from "./ContextMenu.svelte";
+  import { favoritesStore } from "$lib/stores/favorites.svelte";
 
   interface Props {
     title: string;
@@ -13,6 +15,33 @@
   let scrollContainer: HTMLDivElement;
   let showLeftArrow = $state(false);
   let showRightArrow = $state(true);
+
+  // Long-press context menu state
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let longPressed = false;
+  let contextMenu = $state({ visible: false, x: 0, y: 0, channel: null as Channel | null });
+
+  function showContextMenuFor(target: HTMLElement, channel: Channel) {
+    const rect = target.getBoundingClientRect();
+    contextMenu = {
+      visible: true,
+      x: rect.left + rect.width / 2 - 100,
+      y: rect.top + rect.height / 2 - 24,
+      channel,
+    };
+  }
+
+  function closeContextMenu() {
+    contextMenu = { visible: false, x: 0, y: 0, channel: null };
+  }
+
+  function getContextMenuItems(channel: Channel) {
+    const isFav = favoritesStore.isChannelFavorite(channel.id);
+    return [{
+      label: isFav ? 'Remove from Favorites' : 'Add to Favorites',
+      action: () => { favoritesStore.toggleChannel(channel); },
+    }];
+  }
 
   function handleScroll() {
     if (!scrollContainer) return;
@@ -32,15 +61,57 @@
 
   function handleChannelClick(channel: Channel) {
     if (channel.stream_url) {
-      goto(`/live?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}`);
+      const chIdx = channels.indexOf(channel);
+      sessionStorage.setItem('liveChannelList', JSON.stringify(channels.map(ch => ({ name: ch.name, url: ch.stream_url }))));
+      goto(`/live/play?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}&chIdx=${chIdx}`);
     }
   }
 
   function handleKeydown(event: KeyboardEvent, channel: Channel) {
-    if (event.key === "Enter" || event.key === " ") {
+    if (event.key === 'Enter' && !event.repeat) {
+      event.preventDefault();
+      event.stopPropagation();
+      longPressed = false;
+      longPressTimer = setTimeout(() => {
+        longPressed = true;
+        showContextMenuFor(event.currentTarget as HTMLElement, channel);
+      }, 600);
+      return;
+    }
+    if (event.key === " ") {
       event.preventDefault();
       handleChannelClick(channel);
     }
+  }
+
+  function handleKeyup(event: KeyboardEvent, channel: Channel) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      if (!longPressed) {
+        handleChannelClick(channel);
+      }
+    }
+  }
+
+  function handlePointerDown(e: PointerEvent, channel: Channel) {
+    longPressed = false;
+    longPressTimer = setTimeout(() => {
+      longPressed = true;
+      showContextMenuFor(e.currentTarget as HTMLElement, channel);
+    }, 600);
+  }
+
+  function handlePointerUp(e: PointerEvent, channel: Channel) {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (!longPressed) {
+      handleChannelClick(channel);
+    }
+  }
+
+  function handlePointerCancel() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
   }
 </script>
 
@@ -75,8 +146,12 @@
             tabindex="0"
             role="button"
             aria-label="Watch {channel.name}"
-            onclick={() => handleChannelClick(channel)}
             onkeydown={(e) => handleKeydown(e, channel)}
+            onkeyup={(e) => handleKeyup(e, channel)}
+            onpointerdown={(e) => handlePointerDown(e, channel)}
+            onpointerup={(e) => handlePointerUp(e, channel)}
+            onpointercancel={handlePointerCancel}
+            onfocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'center' })}
           >
             <div class="logo-container">
               {#if channel.logo}
@@ -107,6 +182,17 @@
                 LIVE
               </div>
             {/if}
+            <button
+              class="menu-btn"
+              tabindex="-1"
+              aria-label="More options"
+              onclick={(e) => { e.stopPropagation(); showContextMenuFor(e.currentTarget.closest('.channel-card') as HTMLElement, channel); }}
+              onpointerdown={(e) => e.stopPropagation()}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
+              </svg>
+            </button>
           </article>
         {/each}
       {/if}
@@ -121,6 +207,16 @@
     {/if}
   </div>
 </section>
+
+{#if contextMenu.visible && contextMenu.channel}
+  <ContextMenu
+    visible={contextMenu.visible}
+    x={contextMenu.x}
+    y={contextMenu.y}
+    items={getContextMenuItems(contextMenu.channel)}
+    onclose={closeContextMenu}
+  />
+{/if}
 
 <style>
   .channel-row {
@@ -252,6 +348,36 @@
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
+  }
+
+  .menu-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 28px;
+    height: 28px;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    transition: background 0.2s ease;
+    padding: 0;
+    z-index: 5;
+  }
+
+  .menu-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+  }
+
+  .menu-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .scroll-btn {

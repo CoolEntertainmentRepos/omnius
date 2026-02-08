@@ -1,30 +1,27 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
   import { configStore } from "$lib/stores/config.svelte";
-
-  interface Props {
-    activeNav?: string;
-    onNavClick?: (nav: string) => void;
-  }
-
-  let { activeNav = "", onNavClick }: Props = $props();
 
   let showMovies = $derived(configStore.isEnabled("movies"));
   let showSeries = $derived(configStore.isEnabled("series"));
   let showLive = $derived(configStore.isEnabled("channels"));
 
-  function handleClick(nav: string) {
-    if (onNavClick) {
-      onNavClick(nav);
-    } else {
-      // Default behavior: navigate to home with nav param
-      if (nav === "settings") {
-        goto("/settings");
-      } else {
-        goto(`/?nav=${nav}`);
-      }
-    }
+  // Derive active nav from current route pathname
+  let pathname = $derived($page.url.pathname);
+  let activeNav = $derived.by(() => {
+    if (pathname.startsWith('/movies')) return 'movies';
+    if (pathname.startsWith('/series')) return 'series';
+    if (pathname.startsWith('/live')) return 'live';
+    if (pathname.startsWith('/search')) return 'search';
+    if (pathname.startsWith('/favorites')) return 'favorites';
+    if (pathname.startsWith('/settings')) return 'settings';
+    return 'home';
+  });
+
+  function nav(route: string) {
+    goto(route);
   }
 </script>
 
@@ -39,7 +36,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "search"}
-      onclick={() => handleClick("search")}
+      onclick={() => nav("/search")}
       aria-label="Search"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -49,7 +46,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "home"}
-      onclick={() => handleClick("home")}
+      onclick={() => nav("/")}
       aria-label="Home"
       autofocus
     >
@@ -61,7 +58,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "movies"}
-      onclick={() => handleClick("movies")}
+      onclick={() => nav("/movies")}
       aria-label="Movies"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -72,8 +69,8 @@
     {#if showSeries}
     <button
       class="nav-item"
-      class:active={activeNav === "tv"}
-      onclick={() => handleClick("tv")}
+      class:active={activeNav === "series"}
+      onclick={() => nav("/series")}
       aria-label="TV Series"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -85,7 +82,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "live"}
-      onclick={() => handleClick("live")}
+      onclick={() => nav("/live")}
       aria-label="Live Channels"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -98,7 +95,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "favorites"}
-      onclick={() => handleClick("favorites")}
+      onclick={() => nav("/favorites")}
       aria-label="My List"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -111,7 +108,7 @@
     <button
       class="nav-item"
       class:active={activeNav === "settings"}
-      onclick={() => handleClick("settings")}
+      onclick={() => nav("/settings")}
       aria-label="Settings"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">

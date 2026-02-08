@@ -45,7 +45,7 @@
     const channelListData = playable.map(ch => ({ name: ch.name, url: ch.stream_url! }));
     const idx = channelListData.findIndex(ch => ch.url === channel.stream_url);
     sessionStorage.setItem('liveChannelList', JSON.stringify(channelListData));
-    goto(`/live?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}&chIdx=${idx}`);
+    goto(`/live/play?url=${encodeURIComponent(channel.stream_url)}&title=${encodeURIComponent(channel.name)}&chIdx=${idx}`);
   }
 
   function playFavoriteChannel(channel: Channel) {

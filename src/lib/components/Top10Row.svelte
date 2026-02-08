@@ -11,7 +11,7 @@
   let { title, movies, sectionId = "" }: Props = $props();
 
   function handleClick(movie: Movie) {
-    goto(`/movie/${movie.id}`);
+    goto(`/movies/${movie.id}`);
   }
 
   function handleKeydown(e: KeyboardEvent, movie: Movie) {

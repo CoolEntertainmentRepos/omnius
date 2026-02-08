@@ -1,6 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use tauri::Manager;
 
 const GITHUB_OWNER: &str = "flakerim";
 const GITHUB_REPO: &str = "streamer";

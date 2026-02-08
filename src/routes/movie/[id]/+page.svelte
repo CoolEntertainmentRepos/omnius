@@ -5,18 +5,17 @@
   import { browser } from "$app/environment";
   import MovieCard from "$lib/components/MovieCard.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import { getMovieDetails, getMovieSuggestions, getMovieRating, startStream, syncMovieToLocal, getFranchiseMovies } from "$lib/api/commands";
+  import { getMovieDetails, getMovieSuggestions, startStream, getFranchiseMovies } from "$lib/api/commands";
   import { streamStore } from "$lib/stores/stream.svelte";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
   import { remindersStore } from "$lib/stores/reminders.svelte";
-  import type { MovieDetails, Movie, MovieRating, Torrent } from "$lib/api/types";
+  import type { MovieDetails, Movie, Torrent } from "$lib/api/types";
 
   let movieId = $derived(parseInt($page.params.id || "0", 10));
 
   let movie = $state<MovieDetails | null>(null);
   let suggestions = $state<Movie[]>([]);
   let franchiseMovies = $state<Movie[]>([]);
-  let rating = $state<MovieRating | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let selectedTorrent = $state<Torrent | null>(null);
@@ -29,7 +28,6 @@
     loading = true;
     error = null;
     selectedTorrent = null;
-    rating = null;
     franchiseMovies = [];
 
     try {
@@ -66,22 +64,7 @@
         }
       }
 
-      // Fetch rating from OMDB in background
-      if (movie.imdb_code) {
-        getMovieRating(movie.imdb_code)
-          .then((r) => {
-            rating = r;
-          })
-          .catch((err) => {
-            console.warn("Failed to fetch rating:", err);
-          });
-      }
-
-      // Sync movie to local database if it came from external search (YTS)
-      // This grows the DB organically when users discover new movies
-      if (movie.provider === 'yts' || !movie.provider) {
-        syncMovieToLocal(movie);
-      }
+      // Ratings come from the movie details object already (imdb_rating, rotten_tomatoes, metacritic)
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to load movie";
       movie = null;
@@ -362,26 +345,26 @@
             {#if movie.runtime}
               <span class="runtime">{formatRuntime(movie.runtime)}</span>
             {/if}
-            {#if rating?.rated || movie.mpa_rating}
-              <span class="mpa-rating">{rating?.rated || movie.mpa_rating}</span>
+            {#if movie.mpa_rating}
+              <span class="mpa-rating">{movie.mpa_rating}</span>
             {/if}
           </div>
 
           <div class="ratings-row">
-            {#if movie.imdb_rating || rating?.imdb_rating}
+            {#if movie.imdb_rating}
               <span class="rating-badge imdb">
                 <span class="rating-label">IMDb</span>
-                <span class="rating-value">{(movie.imdb_rating || rating?.imdb_rating || 0).toFixed(1)}</span>
+                <span class="rating-value">{(movie.imdb_rating || 0).toFixed(1)}</span>
               </span>
             {/if}
-            {#if movie.rotten_tomatoes || rating?.rotten_tomatoes}
+            {#if movie.rotten_tomatoes}
               <span class="rating-badge rt">
                 <span class="rating-label">RT</span>
-                <span class="rating-value">{movie.rotten_tomatoes || rating?.rotten_tomatoes}%</span>
+                <span class="rating-value">{movie.rotten_tomatoes}%</span>
               </span>
             {/if}
-            {#if movie.metacritic || rating?.metascore}
-              {@const metaScore = movie.metacritic || rating?.metascore || 0}
+            {#if movie.metacritic}
+              {@const metaScore = movie.metacritic || 0}
               <span class="rating-badge meta" class:green={metaScore >= 61} class:yellow={metaScore >= 40 && metaScore < 61} class:red={metaScore < 40}>
                 <span class="rating-value">{metaScore}</span>
               </span>
@@ -397,7 +380,7 @@
           {/if}
 
           <p class="description" class:truncated={!showMore}>
-            {rating?.plot || movie.description_full || movie.synopsis || movie.summary || "No description available."}
+            {movie.description_full || movie.synopsis || movie.summary || "No description available."}
           </p>
 
           <button class="more-btn" onclick={() => showMore = !showMore}>
@@ -449,14 +432,14 @@
 
           <div class="modal-body" bind:this={modalBodyEl}>
             <p class="modal-description">
-              {rating?.plot || movie.description_full || movie.synopsis || movie.summary || ""}
+              {movie.description_full || movie.synopsis || movie.summary || ""}
             </p>
 
             <div class="modal-details">
-              {#if movie.director || rating?.director}
+              {#if movie.director}
                 <div class="crew-info">
                   <span class="crew-label">Director</span>
-                  <span class="crew-value">{movie.director || rating?.director}</span>
+                  <span class="crew-value">{movie.director}</span>
                 </div>
               {/if}
               {#if movie.writers && movie.writers.length > 0}
@@ -465,22 +448,22 @@
                   <span class="crew-value">{movie.writers.slice(0, 3).join(', ')}</span>
                 </div>
               {/if}
-              {#if rating?.actors || (movie.cast && movie.cast.length > 0)}
+              {#if movie.cast && movie.cast.length > 0}
                 <div class="crew-info">
                   <span class="crew-label">Stars</span>
-                  <span class="crew-value">{rating?.actors || movie.cast?.slice(0, 3).map(c => c.name).join(', ')}</span>
+                  <span class="crew-value">{movie.cast.slice(0, 3).map(c => c.name).join(', ')}</span>
                 </div>
               {/if}
-              {#if movie.country || rating?.country}
+              {#if movie.country}
                 <div class="crew-info">
                   <span class="crew-label">Country</span>
-                  <span class="crew-value">{movie.country || rating?.country}</span>
+                  <span class="crew-value">{movie.country}</span>
                 </div>
               {/if}
-              {#if (movie.awards && movie.awards !== "N/A") || (rating?.awards && rating.awards !== "N/A")}
+              {#if movie.awards && movie.awards !== "N/A"}
                 <div class="crew-info">
                   <span class="crew-label">Awards</span>
-                  <span class="crew-value">{movie.awards || rating?.awards}</span>
+                  <span class="crew-value">{movie.awards}</span>
                 </div>
               {/if}
               {#if movie.budget}
@@ -489,10 +472,10 @@
                   <span class="crew-value">{movie.budget}</span>
                 </div>
               {/if}
-              {#if movie.box_office_gross || rating?.box_office}
+              {#if movie.box_office_gross}
                 <div class="crew-info">
                   <span class="crew-label">Box Office</span>
-                  <span class="crew-value">{movie.box_office_gross || rating?.box_office}</span>
+                  <span class="crew-value">{movie.box_office_gross}</span>
                 </div>
               {/if}
             </div>

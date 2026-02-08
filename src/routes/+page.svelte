@@ -8,16 +8,17 @@
   import MovieGrid from "$lib/components/MovieGrid.svelte";
   import SeriesRow from "$lib/components/SeriesRow.svelte";
   import SeriesGrid from "$lib/components/SeriesGrid.svelte";
+  import LiveTVFavoritesSection from "$lib/components/LiveTVFavoritesSection.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import SearchSection from "$lib/components/SearchSection.svelte";
-  import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
+  import { listMovies, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
+  import { configStore } from "$lib/stores/config.svelte";
   import { makeFocusable, addSection, setFocus } from "$lib/utils/tvNavigation";
-  import type { Movie, MovieRating, Series, ListSeriesParams, Channel } from "$lib/api/types";
+  import type { Movie, Series, ListSeriesParams, Channel } from "$lib/api/types";
 
   // Category rows data
   let featured = $state<Movie | null>(null);
-  let featuredRating = $state<MovieRating | null>(null);
   let featuredBackground = $state<string | null>(null);
 
   // Hero background slideshow (multiple images for same movie)
@@ -36,12 +37,14 @@
   let scifi = $state<Movie[]>([]);
   let drama = $state<Movie[]>([]);
   let homeSeries = $state<Series[]>([]);
+  let homeChannels = $state<Channel[]>([]);
 
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let retryCount = $state(0);
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let activeNav = $state("home");
+  let homeTab = $state<string>('all');
 
   // Search state
   let searchQuery = $state("");
@@ -163,18 +166,18 @@
     "Music", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western"
   ];
 
-  onMount(async () => {
+  onMount(() => {
     // Check for tab parameter in URL
     const urlParams = new URLSearchParams(window.location.search);
     const tab = urlParams.get('tab');
     if (tab === 'tvshows' || tab === 'tv') {
-      await handleNavClick('tv');
+      handleNavClick('tv');
     } else if (tab === 'movies') {
-      await handleNavClick('movies');
+      handleNavClick('movies');
     } else if (tab === 'live' || tab === 'channels') {
-      await handleNavClick('live');
+      handleNavClick('live');
     } else {
-      await loadHomeContent();
+      loadHomeContent();
     }
     // Refresh focusable elements and set initial focus
     setTimeout(() => {
@@ -216,6 +219,11 @@
     loadError = null;
 
     try {
+      // Ensure config is loaded before checking enabled services
+      if (!configStore.loaded) {
+        await configStore.fetchConfig();
+      }
+
       // First, try to load dynamic home data from server
       const homeData = await getHomeData();
       homeSections = homeData.sections || [];
@@ -263,9 +271,6 @@
             featuredBackground = featured.background_image_original || featured.large_cover_image || null;
           }
 
-          // Get rating
-          const rating = await getMovieRating(featured.imdb_code);
-          if (rating) featuredRating = rating;
         }
       }
 
@@ -299,7 +304,7 @@
       }
 
       // Always load these additional sections (API might not have them)
-      if (action.length === 0 || comedy.length === 0) {
+      if (configStore.isEnabled("movies") && (action.length === 0 || comedy.length === 0)) {
         const [actionData, comedyData, thrillerData, scifiData, dramaData] = await Promise.all([
           listMovies({ genre: "Action", sort_by: "rating", limit: 20 }),
           listMovies({ genre: "Comedy", sort_by: "rating", limit: 20 }),
@@ -315,17 +320,17 @@
       }
 
       // Load TV series for home row (non-blocking)
-      listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc' })
-        .then(data => { homeSeries = data.series || []; })
-        .catch(err => console.warn('[Home] Failed to load series:', err));
+      if (configStore.isEnabled("series")) {
+        listSeries({ limit: 20, sort_by: 'rating', order_by: 'desc' })
+          .then(data => { homeSeries = data.series || []; })
+          .catch(err => console.warn('[Home] Failed to load series:', err));
+      }
 
-      // Fetch OMDB rating for featured movie
-      if (featured?.imdb_code) {
-        try {
-          featuredRating = await getMovieRating(featured.imdb_code);
-        } catch (err) {
-          console.warn('[Home] Failed to fetch featured movie rating:', err);
-        }
+      // Load live channels for home row (non-blocking)
+      if (configStore.isEnabled("channels")) {
+        listChannels({ limit: 20 })
+          .then(data => { homeChannels = data.channels || []; })
+          .catch(err => console.warn('[Home] Failed to load channels:', err));
       }
 
       // Reset retry count on success
@@ -957,6 +962,26 @@
     }
   }
 
+  function toggleCountryFav(groupCode: string) {
+    const country = iptvCountries.find(c => c.code === groupCode);
+    if (country) {
+      favoritesStore.toggleCountry({ code: country.code, name: country.name, flag: country.flag });
+    }
+  }
+
+  function toggleChannelFav(channel: IPTVChannel | Channel) {
+    const ch: Channel = {
+      id: 'id' in channel ? channel.id : '',
+      name: channel.name,
+      logo: channel.logo,
+      stream_url: 'stream_url' in channel ? channel.stream_url : ('url' in channel ? (channel as IPTVChannel).url : undefined),
+      country: channel.country,
+      categories: channel.categories,
+      languages: channel.languages,
+    };
+    favoritesStore.toggleChannel(ch);
+  }
+
   function handlePlay() {
     if (featured) {
       console.log('[Hero Play] Featured ID:', featured.id, 'Title:', featured.title);
@@ -1319,31 +1344,47 @@
           </div>
           <div class="channels-list">
             {#each getChannelsInGroup(selectedGroup) as channel (channel.id)}
-              <button class="channel-list-item" onclick={() => playChannel(channel)}>
-                {#if channel.logo}
-                  <img src={channel.logo} alt="" class="channel-list-logo" />
-                {:else}
-                  <div class="channel-list-logo-placeholder">
-                    <svg viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                    </svg>
-                  </div>
-                {/if}
-                <span class="channel-list-name">{channel.name}</span>
-                <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              </button>
+              <div class="channel-list-row">
+                <button class="channel-list-item" onclick={() => playChannel(channel)}>
+                  {#if channel.logo}
+                    <img src={channel.logo} alt="" class="channel-list-logo" />
+                  {:else}
+                    <div class="channel-list-logo-placeholder">
+                      <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                      </svg>
+                    </div>
+                  {/if}
+                  <span class="channel-list-name">{channel.name}</span>
+                  <svg class="channel-play-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                </button>
+                <button
+                  class="fav-btn-inline"
+                  class:favorited={favoritesStore.isChannelFavorite(channel.id)}
+                  onclick={(e) => { e.stopPropagation(); toggleChannelFav(channel); }}
+                  aria-label="Toggle favorite"
+                >&#9829;</button>
+              </div>
             {/each}
           </div>
         {:else}
           <p class="channels-info">{iptvChannels.length} channels available</p>
           <div class="genre-grid">
             {#each channelGroups as group (group)}
-              <button class="genre-card" onclick={() => selectGroup(group)}>
-                {getGroupName(group)}
-                <span class="group-count">({getChannelsInGroup(group).length})</span>
-              </button>
+              <div class="genre-card-wrapper">
+                <button class="genre-card" onclick={() => selectGroup(group)}>
+                  {getGroupName(group)}
+                  <span class="group-count">({getChannelsInGroup(group).length})</span>
+                </button>
+                <button
+                  class="fav-btn-inline"
+                  class:favorited={favoritesStore.isCountryFavorite(group)}
+                  onclick={(e) => { e.stopPropagation(); toggleCountryFav(group); }}
+                  aria-label="Toggle favorite"
+                >&#9829;</button>
+              </div>
             {/each}
           </div>
         {/if}
@@ -1515,7 +1556,7 @@
       </div>
     {:else}
       <!-- Home View -->
-      {#if featured}
+      {#if featured && (homeTab === 'all' || homeTab === 'movies')}
         <div
           class="hero"
           onmouseenter={stopHeroAutoplay}
@@ -1549,12 +1590,12 @@
             <h1 class="hero-title">{featured.title}</h1>
             <div class="hero-meta">
               <span class="hero-year">{featured.year}</span>
-              {#if featuredRating?.imdb_rating}
+              {#if featured.imdb_rating && featured.imdb_rating > 0}
                 <span class="hero-rating">
                   <svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                   </svg>
-                  {featuredRating.imdb_rating.toFixed(1)} IMDb
+                  {featured.imdb_rating.toFixed(1)} IMDb
                 </span>
               {:else if featured.rating && featured.rating > 0}
                 <span class="hero-rating">
@@ -1590,44 +1631,60 @@
         </div>
       {/if}
 
-      <!-- Movie Rows -->
-      <div class="content">
-        <!-- Dynamic sections from API (excludes hero/banner) -->
-        {#each homeSections.filter(s => s.display_type !== 'hero' && s.display_type !== 'banner' && s.movies && s.movies.length > 0) as section}
-          {#if section.display_type === 'top10'}
-            <Top10Row title={section.title} movies={section.movies || []} sectionId={section.id} />
-          {:else}
-            <MovieRow title={section.title} movies={section.movies || []} />
-          {/if}
+      <!-- Home Tab Bar -->
+      <div class="home-tabs">
+        <button class="home-tab" class:active={homeTab === 'all'} onclick={() => homeTab = 'all'}>All</button>
+        {#each configStore.getEnabledServices() as service (service.id)}
+          <button class="home-tab" class:active={homeTab === service.id}
+            onclick={() => homeTab = service.id}>{service.label}</button>
         {/each}
+      </div>
 
-        <!-- Fallback sections if no API sections loaded -->
-        {#if homeSections.filter(s => s.display_type !== 'hero').length === 0}
-          <MovieRow title="Trending Now" movies={trending} />
-          <MovieRow title="Top Rated" movies={topRated} />
-          <MovieRow title="New Releases" movies={newReleases} />
-        {/if}
+      <!-- Service-aware content sections (filtered by tab) -->
+      <div class="content">
+        {#if homeTab === 'channels'}
+          <LiveTVFavoritesSection />
+        {:else}
+          {#each configStore.getEnabledServices() as service (service.id)}
+            {#if service.id === "movies" && (homeTab === 'all' || homeTab === 'movies')}
+              <!-- Dynamic sections from API (excludes hero/banner) -->
+              {#each homeSections.filter(s => s.display_type !== 'hero' && s.display_type !== 'banner' && s.movies && s.movies.length > 0) as section}
+                {#if section.display_type === 'top10'}
+                  <Top10Row title={section.title} movies={section.movies || []} sectionId={section.id} />
+                {:else}
+                  <MovieRow title={section.title} movies={section.movies || []} />
+                {/if}
+              {/each}
 
-        <!-- TV Series row -->
-        {#if homeSeries.length > 0}
-          <SeriesRow title="Popular TV Series" series={homeSeries} />
-        {/if}
+              <!-- Fallback sections if no API sections loaded -->
+              {#if homeSections.filter(s => s.display_type !== 'hero').length === 0}
+                <MovieRow title="Trending Now" movies={trending} />
+                <MovieRow title="Top Rated" movies={topRated} />
+                <MovieRow title="New Releases" movies={newReleases} />
+              {/if}
 
-        <!-- Genre sections (always shown) -->
-        {#if action.length > 0}
-          <MovieRow title="Action" movies={action} />
-        {/if}
-        {#if thriller.length > 0}
-          <MovieRow title="Thriller" movies={thriller} />
-        {/if}
-        {#if scifi.length > 0}
-          <MovieRow title="Sci-Fi" movies={scifi} />
-        {/if}
-        {#if comedy.length > 0}
-          <MovieRow title="Comedy" movies={comedy} />
-        {/if}
-        {#if drama.length > 0}
-          <MovieRow title="Drama" movies={drama} />
+              <!-- Genre sections -->
+              {#if action.length > 0}
+                <MovieRow title="Action" movies={action} />
+              {/if}
+              {#if thriller.length > 0}
+                <MovieRow title="Thriller" movies={thriller} />
+              {/if}
+              {#if scifi.length > 0}
+                <MovieRow title="Sci-Fi" movies={scifi} />
+              {/if}
+              {#if comedy.length > 0}
+                <MovieRow title="Comedy" movies={comedy} />
+              {/if}
+              {#if drama.length > 0}
+                <MovieRow title="Drama" movies={drama} />
+              {/if}
+            {:else if service.id === "series" && (homeTab === 'all' || homeTab === 'series')}
+              {#if homeSeries.length > 0}
+                <SeriesRow title="Popular TV Shows" series={homeSeries} />
+              {/if}
+            {/if}
+          {/each}
         {/if}
       </div>
     {/if}
@@ -1853,6 +1910,104 @@
 
   .hero-bg-front.visible {
     opacity: 1;
+  }
+
+  /* Home Tab Bar */
+  .home-tabs {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    padding: 0 40px;
+    margin-top: -5px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+
+  .home-tab {
+    padding: 6px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    color: #aaa;
+    font-size: 0.8rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .home-tab:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  .home-tab.active {
+    background: #e50914;
+    border-color: #e50914;
+    color: #fff;
+  }
+
+  .home-tab:focus,
+  .home-tab:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.5);
+  }
+
+  /* Favorite button inline */
+  .fav-btn-inline {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .fav-btn-inline:hover {
+    color: #e50914;
+    transform: scale(1.2);
+  }
+
+  .fav-btn-inline.favorited {
+    color: #e50914;
+  }
+
+  .fav-btn-inline:focus,
+  .fav-btn-inline:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.5);
+  }
+
+  /* Genre card wrapper for fav button */
+  .genre-card-wrapper {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .genre-card-wrapper .fav-btn-inline {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 0.9rem;
+    padding: 2px 4px;
+    z-index: 2;
+  }
+
+  /* Channel list row with fav button */
+  .channel-list-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .channel-list-row .channel-list-item {
+    flex: 1;
   }
 
   /* Content */

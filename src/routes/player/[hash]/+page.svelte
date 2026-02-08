@@ -7,7 +7,13 @@
   import { searchSubtitles, startStream, downloadSubtitle, checkStreamReady, serveSubtitle, recordView, streamStart, streamHeartbeat, streamEnd, listTorrentFiles, searchSubtitlesByFilename, type Subtitle, type TorrentFile } from "$lib/api/commands";
   import { makeFocusable } from "$lib/utils/tvNavigation";
   import { platform } from "@tauri-apps/plugin-os";
-  import { playVideo, onPlaybackEvent } from "tauri-plugin-videoplayer-api";
+  import { playVideo } from "tauri-plugin-videoplayer-api";
+  import { listen } from "@tauri-apps/api/event";
+
+  // onPlaybackEvent wrapper using Tauri event system
+  async function onPlaybackEvent(eventName: string, handler: (event: any) => void) {
+    return listen(`videoplayer://${eventName}`, (e) => handler(e.payload));
+  }
 
   let hash = $derived($page.params.hash || "");
   let title = $derived($page.url.searchParams.get("title") || "Movie");
@@ -36,7 +42,6 @@
   let subtitleDownloading = $state(false);
   let servedSubtitleUrl = $state<string | null>(null);
   let preferredLanguage = $state<string>("en");
-  let subdlApiKey = $state<string | undefined>(undefined);
   let error = $state<string | null>(null);
   let actualStreamUrl = $state<string | null>(null);
   let isAndroid = $state(false);
@@ -159,9 +164,6 @@
     // Load subtitle settings
     const savedLang = localStorage.getItem("preferredSubtitleLanguage");
     if (savedLang) preferredLanguage = savedLang;
-    const savedKey = localStorage.getItem("subdlApiKey");
-    if (savedKey) subdlApiKey = savedKey;
-
     // Load resume position for this hash
     const savedPosition = localStorage.getItem(`resume_${hash}`);
     if (savedPosition) {
@@ -302,7 +304,7 @@
       console.log("[Player] Launching ExoPlayer with", subtitleTracks.length, "subtitle tracks, resume:", resumePosition);
 
       // Register event listeners in parallel before launching
-      const listeners: Array<{ remove?: () => void; unregister?: () => void }> = [];
+      const listeners: Array<any> = [];
       try {
         const [posListener, stateListener, errListener] = await Promise.all([
           onPlaybackEvent('positionUpdate', (event: any) => {
@@ -325,11 +327,7 @@
       }
 
       try {
-        await playVideo(actualStreamUrl, undefined, {
-          subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
-          startPosition: resumePosition > 0 ? resumePosition : undefined,
-          title: title,
-        });
+        await playVideo(actualStreamUrl);
 
         nativePlayerLaunched = true;
 
@@ -420,7 +418,7 @@
       }
       console.log("[Player] Searching subtitles for native player, languages:", languages);
 
-      const result = await searchSubtitles(imdb, subdlApiKey, languages);
+      const result = await searchSubtitles(imdb, languages);
       if (result.subtitles.length === 0) {
         console.log("[Player] No subtitles found for native player");
         return null;
@@ -495,7 +493,7 @@
         return { subtitles: [] as Subtitle[], total_count: 0 };
       })(),
       // 3. Search by IMDB ID
-      imdb ? searchSubtitles(imdb, subdlApiKey, languages).catch(() => ({ subtitles: [] as Subtitle[], total_count: 0 })) : Promise.resolve({ subtitles: [] as Subtitle[], total_count: 0 }),
+      imdb ? searchSubtitles(imdb, languages).catch(() => ({ subtitles: [] as Subtitle[], total_count: 0 })) : Promise.resolve({ subtitles: [] as Subtitle[], total_count: 0 }),
     ]);
 
     // Process embedded subtitles (highest priority)
@@ -612,7 +610,7 @@
       }
       console.log(`[Player] Searching subtitles with languages: ${languages}`);
 
-      const result = await searchSubtitles(imdb, subdlApiKey, languages);
+      const result = await searchSubtitles(imdb, languages);
       availableSubtitles = result.subtitles;
       console.log(`[Player] Found ${result.total_count} subtitles`);
 
@@ -932,11 +930,7 @@
     if (!actualStreamUrl) return;
     try {
       const subtitleTracks = await gatherAllSubtitles(hash, imdbCode);
-      await playVideo(actualStreamUrl, undefined, {
-        subtitles: subtitleTracks.length > 0 ? subtitleTracks : undefined,
-        startPosition: nativeLastPosition > 0 ? nativeLastPosition : undefined,
-        title: title,
-      });
+      await playVideo(actualStreamUrl);
       // Position saved via positionUpdate event listener
     } catch (err) {
       console.error("[Player] Native replay failed:", err);
@@ -947,8 +941,8 @@
   async function openExternal() {
     if (!actualStreamUrl) return;
     try {
-      const { open } = await import("@tauri-apps/plugin-opener");
-      await open(actualStreamUrl);
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(actualStreamUrl);
       console.log("[Player] Opened stream in external player");
     } catch (err) {
       console.error("[Player] Failed to open external player:", err);

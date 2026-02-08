@@ -1,8 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listMovies, listSeries, API_URL } from "$lib/api/commands";
-  import type { Movie, Series, Channel, MovieListData } from "$lib/api/types";
+  import { listMovies, listSeries, getApiUrl } from "$lib/api/commands";
+  import type { Movie, Series, Channel } from "$lib/api/types";
   import MovieGrid from "./MovieGrid.svelte";
   import SeriesGrid from "./SeriesGrid.svelte";
 
@@ -38,26 +37,10 @@
 
     try {
       if (type === 'movies') {
-        // Search both local DB and YTS in parallel
-        const [localData, ytsData] = await Promise.all([
-          listMovies({ query_term: searchQuery, limit: 50, page: 1 }).catch(() => ({ movies: [] })),
-          invoke<MovieListData>("list_movies", { params: { query_term: searchQuery, limit: 50, page: 1 } }).catch(() => ({ movies: [] }))
-        ]);
-
-        const localMovies = localData?.movies || [];
-        const ytsMovies = (ytsData?.movies || []) as Movie[];
-
-        // Create a map of local movies by IMDB code for quick lookup
-        const localImdbCodes = new Set(localMovies.map(m => m.imdb_code));
-
-        // Mark YTS movies that aren't in local DB
-        const ytsOnlyMovies = ytsMovies
-          .filter(m => m.imdb_code && !localImdbCodes.has(m.imdb_code))
-          .map(m => ({ ...m, _isYtsOnly: true }));
-
-        // Merge: local movies first, then YTS-only movies
-        movieResults = [...localMovies, ...ytsOnlyMovies];
-        console.log(`[Search] Found ${localMovies.length} local, ${ytsOnlyMovies.length} YTS-only movies`);
+        // Search from server
+        const localData = await listMovies({ query_term: searchQuery, limit: 50, page: 1 }).catch(() => ({ movies: [] }));
+        movieResults = localData?.movies || [];
+        console.log(`[Search] Found ${movieResults.length} movies`);
       } else if (type === 'tvshows') {
         // Search both local DB and IMDB API in parallel
         const [localData, imdbData] = await Promise.all([
@@ -100,9 +83,6 @@
     }
   }
 
-  // IMDB API (api.imdbapi.dev)
-  const IMDB_API_BASE = 'https://api.imdbapi.dev';
-
   // Helper to extract quality from filename
   function extractQuality(filename: string): string {
     const f = filename.toLowerCase();
@@ -125,7 +105,7 @@
   async function searchImdbSeries(query: string): Promise<Series[]> {
     try {
       const response = await fetch(
-        `${IMDB_API_BASE}/search/titles?query=${encodeURIComponent(query)}&titleType=tvSeries,tvMiniSeries&limit=20`
+        `${getApiUrl()}/api/v2/imdb/search?query=${encodeURIComponent(query)}&type=tvSeries`
       );
       const data = await response.json();
 
@@ -159,85 +139,17 @@
     try {
       console.log(`[Search] Syncing series: ${series.title} (${series.imdb_code})`);
 
-      // Fetch full details from IMDB API
-      const [detailsRes, seasonsRes] = await Promise.all([
-        fetch(`${IMDB_API_BASE}/titles/${series.imdb_code}`),
-        fetch(`${IMDB_API_BASE}/titles/${series.imdb_code}/seasons`)
-      ]);
-
-      const details = await detailsRes.json();
-      const seasonsData = await seasonsRes.json();
-
-      // Build full series object
-      const fullSeries = {
-        imdb_code: series.imdb_code,
-        title: details.primaryTitle || details.originalTitle || series.title,
-        title_slug: (details.primaryTitle || series.title).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        year: details.startYear || series.year || 0,
-        rating: details.averageRating || 0,
-        runtime: details.runtime || 0,
-        genres: details.genres || [],
-        summary: details.plot || '',
-        status: details.endYear ? 'ended' : 'ongoing',
-        poster_image: details.primaryImage?.url || series.poster_image || '',
-        background_image: details.primaryImage?.url || '',
-        total_seasons: seasonsData.seasons?.length || 0,
-        total_episodes: seasonsData.seasons?.reduce((sum: number, s: any) => sum + (s.episodeCount || 0), 0) || 0
-      };
-
-      console.log(`[Search] Got details: ${fullSeries.title}, ${fullSeries.total_seasons} seasons`);
-
-      // Fetch torrents from EZTV (IMDB ID without "tt" prefix)
-      const imdbNum = series.imdb_code.replace('tt', '');
-      let eztvTorrents: any[] = [];
-      try {
-        const eztvRes = await fetch(`https://eztvx.to/api/get-torrents?imdb_id=${imdbNum}&limit=100`);
-        const eztvData = await eztvRes.json();
-        eztvTorrents = eztvData.torrents || [];
-        console.log(`[Search] Got ${eztvTorrents.length} torrents from EZTV`);
-      } catch (err) {
-        console.warn('[Search] EZTV fetch failed:', err);
-      }
-
-      // Group torrents by season/episode and build episodes array
-      const episodeMap = new Map<string, any>();
-      for (const t of eztvTorrents) {
-        const key = `${t.season}-${t.episode}`;
-        if (!episodeMap.has(key)) {
-          episodeMap.set(key, {
-            season_number: t.season,
-            episode_number: t.episode,
-            title: t.title || `Episode ${t.episode}`,
-            torrents: []
-          });
-        }
-        episodeMap.get(key).torrents.push({
-          hash: t.hash,
-          quality: t.quality || extractQuality(t.filename || t.title),
-          seeds: t.seeds || 0,
-          peers: t.peers || 0,
-          size: t.size || formatBytes(t.size_bytes),
-          size_bytes: t.size_bytes || 0,
-          season_number: t.season,
-          episode_number: t.episode
-        });
-      }
-
-      // Convert to array and add to fullSeries
-      const episodes = Array.from(episodeMap.values());
-      console.log(`[Search] Grouped into ${episodes.length} episodes`);
-
-      const response = await fetch(`${API_URL}/api/v2/sync_series`, {
+      // Let the server handle all data fetching (IMDB details + torrent search)
+      const response = await fetch(`${getApiUrl()}/api/v2/sync_series`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...fullSeries, episodes })
+        body: JSON.stringify({ imdb_code: series.imdb_code })
       });
 
       if (response.ok) {
         const data = await response.json();
         const newId = data.data?.id;
         console.log(`[Search] Synced series: ${series.title}, ID: ${newId}`);
-        // Update the series in results with the new ID
         seriesResults = seriesResults.map(s =>
           s.imdb_code === series.imdb_code ? { ...s, id: newId, _isOmdbOnly: false } : s
         );
@@ -268,7 +180,7 @@
 
     try {
       // Call the server to sync this movie from YTS
-      const response = await fetch(`${API_URL}/api/v2/sync_movie`, {
+      const response = await fetch(`${getApiUrl()}/api/v2/sync_movie`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imdb_code: movie.imdb_code })

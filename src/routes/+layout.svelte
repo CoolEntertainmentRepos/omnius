@@ -4,14 +4,16 @@
   import IntroSplash from "$lib/components/IntroSplash.svelte";
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { initSpatialNavigation } from "$lib/utils/tvNavigation";
+  import { configStore } from "$lib/stores/config.svelte";
 
   let { children } = $props();
 
-  let showIntro = $state(true);
-  let introCompleted = $state(false);
+  let showIntro = $state(false);
+  let introCompleted = $state(true);
 
-  onMount(async () => {
+  onMount(() => {
     console.log('[Layout] onMount called, browser:', browser);
 
     // Check if intro was already shown this session
@@ -23,11 +25,17 @@
     // Initialize spatial navigation for TV remote/D-pad
     if (browser) {
       console.log('[Layout] Calling initSpatialNavigation...');
-      try {
-        await initSpatialNavigation();
-        console.log('[Layout] initSpatialNavigation completed');
-      } catch (error) {
-        console.error('[Layout] initSpatialNavigation error:', error);
+      initSpatialNavigation()
+        .then(() => console.log('[Layout] initSpatialNavigation completed'))
+        .catch((error) => console.error('[Layout] initSpatialNavigation error:', error));
+
+      // Redirect to settings if no server URL configured
+      const serverUrl = localStorage.getItem('omnius_server_url');
+      if (!serverUrl && $page.url.pathname !== '/settings') {
+        goto('/settings');
+      } else {
+        // Fetch server config (enabled services)
+        configStore.fetchConfig();
       }
 
       // Handle Android TV back button

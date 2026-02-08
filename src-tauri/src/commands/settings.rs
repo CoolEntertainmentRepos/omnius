@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use super::stream::TorrentManagerState;
+use crate::config::Settings;
+use super::stream::OmniusClientState;
 
 #[derive(Debug, Serialize)]
 pub struct StorageInfo {
@@ -13,21 +15,15 @@ pub struct StorageInfo {
 }
 
 #[tauri::command]
-pub async fn get_storage_info(
-    app: AppHandle,
-    _manager: State<'_, TorrentManagerState>,
-) -> Result<StorageInfo, String> {
-    // Get the same path that TorrentManager uses
+pub async fn get_storage_info(app: AppHandle) -> Result<StorageInfo, String> {
     let download_path = get_app_data_dir(&app)?;
 
     println!("[get_storage_info] Checking path: {:?}", download_path);
 
-    // Calculate used space
     let (used_bytes, file_count) = calculate_dir_size(&download_path)?;
 
     println!("[get_storage_info] Found {} bytes in {} files", used_bytes, file_count);
 
-    // Get free space on the filesystem
     let free_bytes = get_free_space(&download_path)?;
 
     Ok(StorageInfo {
@@ -39,22 +35,22 @@ pub async fn get_storage_info(
 }
 
 #[tauri::command]
-pub async fn clear_cache(
-    app: AppHandle,
-    _manager: State<'_, TorrentManagerState>,
-) -> Result<u64, String> {
+pub async fn clear_cache(app: AppHandle) -> Result<u64, String> {
     let download_path = get_app_data_dir(&app)?;
 
     println!("[clear_cache] Clearing path: {:?}", download_path);
 
-    // Calculate size before clearing
     let (size_cleared, _) = calculate_dir_size(&download_path)?;
 
-    // Remove all files in the download directory
     if download_path.exists() {
         for entry in std::fs::read_dir(&download_path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
+
+            // Don't delete config.json
+            if path.file_name().map(|n| n == "config.json").unwrap_or(false) {
+                continue;
+            }
 
             if path.is_dir() {
                 std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
@@ -72,6 +68,26 @@ pub async fn clear_cache(
 pub async fn get_download_path(app: AppHandle) -> Result<String, String> {
     let path = get_app_data_dir(&app)?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_server_url(
+    settings: State<'_, Arc<Settings>>,
+) -> Result<String, String> {
+    Ok(settings.server_url())
+}
+
+#[tauri::command]
+pub async fn set_server_url(
+    settings: State<'_, Arc<Settings>>,
+    client: State<'_, OmniusClientState>,
+    url: String,
+) -> Result<(), String> {
+    settings.set_server_url(&url);
+    let mut client = client.write().await;
+    client.set_base_url(&url);
+    println!("[set_server_url] Server URL changed to: {}", url);
+    Ok(())
 }
 
 fn get_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -107,12 +123,10 @@ fn calculate_dir_size(path: &PathBuf) -> Result<(u64, usize), String> {
 }
 
 fn get_free_space(path: &PathBuf) -> Result<u64, String> {
-    // Try to get free space, return 0 if it fails (non-critical)
     #[cfg(unix)]
     {
         use std::mem;
 
-        // Use parent directory or root if path doesn't exist
         let check_path = if path.exists() {
             path.clone()
         } else if let Some(parent) = path.parent() {
@@ -136,7 +150,6 @@ fn get_free_space(path: &PathBuf) -> Result<u64, String> {
             if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
                 Ok(stat.f_bavail as u64 * stat.f_bsize as u64)
             } else {
-                // Return 0 instead of error - free space is non-critical
                 Ok(0)
             }
         }

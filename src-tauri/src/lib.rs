@@ -4,112 +4,60 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 mod commands;
-mod omdb;
-mod subtitles;
-mod torrent;
-mod yts;
+mod server;
+mod config;
 
 use commands::{
-    get_movie_details, get_movie_rating, get_movie_suggestions, list_movies, start_stream,
-    get_stream_status, stop_stream, check_stream_ready, serve_subtitle, list_torrent_files,
-    check_for_updates, get_app_version, search_subtitles,
-    get_subtitle_languages, download_subtitle, search_subtitles_by_filename, get_storage_info, clear_cache, get_download_path,
-    // Local API commands
-    list_movies_local, get_movie_details_local, get_movie_suggestions_local,
-    TorrentManagerState,
+    start_stream, get_stream_status, stop_stream, check_stream_ready,
+    serve_subtitle, list_torrent_files,
+    search_subtitles, search_subtitles_by_filename, get_subtitle_languages, download_subtitle,
+    check_for_updates, get_app_version,
+    get_storage_info, clear_cache, get_download_path,
+    get_server_url, set_server_url,
+    OmniusClientState,
 };
-use omdb::OmdbClient;
-use subtitles::SubtitleClient;
-use torrent::TorrentManager;
-use yts::YtsClient;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let yts_client = YtsClient::new();
-    let omdb_client = OmdbClient::new();
-    let subtitle_client = SubtitleClient::new();
-    let torrent_manager: TorrentManagerState = Arc::new(RwLock::new(None));
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_videoplayer::init())
-        .manage(yts_client)
-        .manage(omdb_client)
-        .manage(subtitle_client)
-        .manage(torrent_manager.clone())
-        .setup(move |app| {
-            let app_handle = app.handle().clone();
-            let manager_state = torrent_manager.clone();
+        .setup(|app| {
+            // Load config from app data directory
+            let config_dir = app.path().app_data_dir().ok();
+            let settings = Arc::new(config::Settings::load(config_dir));
 
-            tauri::async_runtime::spawn(async move {
-                println!("[TorrentManager] Starting initialization...");
+            // Create server client
+            let client = server::OmniusClient::new(&settings.server_url());
+            let client_state: OmniusClientState = Arc::new(RwLock::new(client));
 
-                let data_dir = match app_handle.path().app_data_dir() {
-                    Ok(dir) => dir,
-                    Err(e) => {
-                        eprintln!("[TorrentManager] Failed to get app data dir: {}", e);
-                        return;
-                    }
-                };
+            app.manage(settings);
+            app.manage(client_state);
 
-                println!("[TorrentManager] Data dir: {:?}", data_dir);
-
-                // Create the directory if it doesn't exist
-                if let Err(e) = std::fs::create_dir_all(&data_dir) {
-                    eprintln!("[TorrentManager] Failed to create app data dir: {}", e);
-                    return;
-                }
-
-                println!("[TorrentManager] Directory created/exists, creating manager...");
-
-                match TorrentManager::new(data_dir).await {
-                    Ok(manager) => {
-                        println!("[TorrentManager] Manager created, wrapping in Arc...");
-                        let manager = Arc::new(manager);
-
-                        // Start the stream server
-                        println!("[TorrentManager] Starting stream server...");
-                        if let Err(e) = manager.init_stream_server().await {
-                            eprintln!("[TorrentManager] Failed to start stream server: {}", e);
-                        } else {
-                            println!("[TorrentManager] Stream server started on port {}", manager.stream_port());
-                        }
-
-                        let mut guard = manager_state.write().await;
-                        *guard = Some(manager);
-                        println!("[TorrentManager] Initialized successfully and stored in state");
-                    }
-                    Err(e) => {
-                        eprintln!("[TorrentManager] Failed to initialize: {}", e);
-                    }
-                }
-            });
-
+            println!("[Omnius] App initialized - pure client mode (no torrent engine)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_movies,
-            get_movie_details,
-            get_movie_rating,
-            get_movie_suggestions,
             start_stream,
             get_stream_status,
             stop_stream,
             check_stream_ready,
             serve_subtitle,
-            check_for_updates,
-            get_app_version,
+            list_torrent_files,
             search_subtitles,
             search_subtitles_by_filename,
             get_subtitle_languages,
             download_subtitle,
+            check_for_updates,
+            get_app_version,
             get_storage_info,
             clear_cache,
             get_download_path,
-            list_torrent_files,
+            get_server_url,
+            set_server_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

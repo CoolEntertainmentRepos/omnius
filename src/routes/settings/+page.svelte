@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
-  import { getStorageInfo, clearDownloadedFiles, getAppVersion, getSubtitleLanguages, type StorageInfo, type SubtitleLanguage } from "$lib/api/commands";
+  import { getStorageInfo, clearDownloadedFiles, getAppVersion, getSubtitleLanguages, getServerUrl, setServerUrl, getApiUrl, setApiUrl, type StorageInfo, type SubtitleLanguage } from "$lib/api/commands";
   import { clearAllCaches } from "$lib/api/cache";
+  import { configStore } from "$lib/stores/config.svelte";
 
   let storageInfo = $state<StorageInfo | null>(null);
   let appVersion = $state<string>("");
@@ -15,11 +16,25 @@
   let availableLanguages = $state<SubtitleLanguage[]>([]);
   let preferredLanguage = $state<string>("en");
 
+  // Server URL settings
+  let serverUrl = $state<string>("");
+  let serverUrlInput = $state<string>("");
+  let serverTesting = $state(false);
+  let serverStatus = $state<'idle' | 'ok' | 'error'>('idle');
+
   onMount(async () => {
     // Load saved preferences
     if (browser) {
       const savedLang = localStorage.getItem("preferredSubtitleLanguage");
       if (savedLang) preferredLanguage = savedLang;
+    }
+    // Load server URL
+    try {
+      serverUrl = await getServerUrl();
+      serverUrlInput = serverUrl;
+    } catch {
+      serverUrl = getApiUrl();
+      serverUrlInput = serverUrl;
     }
     await loadData();
     if (browser) {
@@ -90,6 +105,36 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
+  async function handleSaveServerUrl() {
+    const url = serverUrlInput.trim().replace(/\/+$/, '');
+    if (!url) return;
+    try {
+      await setServerUrl(url);
+      serverUrl = url;
+      successMessage = "Server URL saved";
+      setTimeout(() => successMessage = null, 2000);
+      // Refresh server config (enabled services)
+      configStore.fetchConfig();
+    } catch (err) {
+      error = "Failed to save server URL";
+    }
+  }
+
+  async function handleTestServer() {
+    const url = serverUrlInput.trim().replace(/\/+$/, '');
+    if (!url) return;
+    serverTesting = true;
+    serverStatus = 'idle';
+    try {
+      const resp = await fetch(`${url}/health`);
+      serverStatus = resp.ok ? 'ok' : 'error';
+    } catch {
+      serverStatus = 'error';
+    } finally {
+      serverTesting = false;
+    }
+  }
+
   function handleBack() {
     history.back();
   }
@@ -134,6 +179,28 @@
       {/if}
 
       <div class="info-section">
+        <div class="info-row server-row">
+          <span class="info-label">Server URL</span>
+          <div class="server-input-group">
+            <input
+              type="text"
+              class="server-input"
+              bind:value={serverUrlInput}
+              placeholder="https://api.omnius.lol"
+            />
+            <button class="server-btn test-btn" onclick={handleTestServer} disabled={serverTesting}>
+              {#if serverTesting}...{:else}Test{/if}
+            </button>
+            <button class="server-btn save-btn" onclick={handleSaveServerUrl} disabled={serverUrlInput === serverUrl}>
+              Save
+            </button>
+            {#if serverStatus === 'ok'}
+              <span class="server-ok">OK</span>
+            {:else if serverStatus === 'error'}
+              <span class="server-err">Fail</span>
+            {/if}
+          </div>
+        </div>
         <div class="info-row">
           <span class="info-label">Subtitle Language</span>
           <select
@@ -402,6 +469,54 @@
     border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+  }
+
+  .server-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .server-input-group {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    align-items: center;
+  }
+
+  .server-input {
+    flex: 1;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.9rem;
+  }
+
+  .server-input:focus {
+    outline: none;
+    border-color: #e50914;
+  }
+
+  .server-btn {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .test-btn { background: rgba(255,255,255,0.15); }
+  .save-btn { background: #e50914; }
+  .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .server-ok { color: #4caf50; font-weight: 600; font-size: 0.9rem; }
+  .server-err { color: #e50914; font-weight: 600; font-size: 0.9rem; }
+
+  .api-cache-btn {
+    margin-top: 12px;
   }
 
   /* TV Styles */

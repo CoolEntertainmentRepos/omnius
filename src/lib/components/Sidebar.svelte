@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
+  import { configStore } from "$lib/stores/config.svelte";
 
   interface Props {
     activeNav?: string;
@@ -8,6 +9,10 @@
   }
 
   let { activeNav = "", onNavClick }: Props = $props();
+
+  let showMovies = $derived(configStore.isEnabled("movies"));
+  let showSeries = $derived(configStore.isEnabled("series"));
+  let showLive = $derived(configStore.isEnabled("channels"));
 
   function handleClick(nav: string) {
     if (onNavClick) {
@@ -52,6 +57,7 @@
         <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
       </svg>
     </button>
+    {#if showMovies}
     <button
       class="nav-item"
       class:active={activeNav === "movies"}
@@ -62,6 +68,8 @@
         <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
       </svg>
     </button>
+    {/if}
+    {#if showSeries}
     <button
       class="nav-item"
       class:active={activeNav === "tv"}
@@ -72,6 +80,8 @@
         <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
       </svg>
     </button>
+    {/if}
+    {#if showLive}
     <button
       class="nav-item"
       class:active={activeNav === "live"}
@@ -82,6 +92,7 @@
         <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
       </svg>
     </button>
+    {/if}
   </div>
   <div class="sidebar-bottom">
     <button
@@ -93,8 +104,8 @@
       <svg viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
       </svg>
-      {#if favoritesStore.count > 0}
-        <span class="nav-badge">{favoritesStore.count}</span>
+      {#if favoritesStore.totalCount > 0}
+        <span class="nav-badge">{favoritesStore.totalCount}</span>
       {/if}
     </button>
     <button

@@ -36,6 +36,8 @@ export interface Movie {
   medium_cover_image: string;
   large_cover_image: string;
   torrents: Torrent[];
+  // IMDB rating (may differ from rating)
+  imdb_rating?: number;
   // Coming soon status
   status?: string;        // "available" or "coming_soon"
   release_date?: string;  // YYYY-MM-DD format

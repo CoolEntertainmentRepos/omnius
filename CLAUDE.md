@@ -27,15 +27,12 @@ npm run tauri build
 - `src-tauri/` - Rust backend (Tauri)
 - `src/lib/components/` - Reusable Svelte components
 - `src/lib/stores/` - Svelte stores (using runes)
-- `src/lib/api/` - API client for torrent-server
+- `src/lib/api/` - API client for omnius-server
 - `src/routes/` - SvelteKit routes
 
 ## Backend API
 
-The app connects to torrent-server at `http://localhost:8080` for:
-- Movie listings and details
-- Torrent streaming
-- Franchise information
+The app is a pure client for omnius-server (default: `https://api.omnius.lol`). The server URL is configurable in Settings. All content, streaming, subtitles, and ratings come from the server. The Rust backend is a thin proxy layer.
 
 ## Tech Stack
 

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Omnius</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: 'JetBrains Mono', monospace;
+        background: #141414;
+        color: #fff;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* Spatial Navigation focus styles */
+      :focus {
+        outline: 3px solid #e50914 !important;
+        outline-offset: 2px;
+      }
+
+      button:focus,
+      .btn-play:focus,
+      .btn-info:focus,
+      .control-btn:focus,
+      .action-btn:focus {
+        box-shadow: 0 0 0 4px #e50914 !important;
+        transform: scale(1.05);
+        transition: all 0.15s ease;
+      }
+
+      .movie-card:focus {
+        transform: scale(1.08);
+        z-index: 10;
+        transition: all 0.15s ease;
+      }
+
+      .nav-item:focus {
+        background: rgba(229, 9, 20, 0.3) !important;
+        color: #fff !important;
+      }
+    </style>
+    
+		<link rel="modulepreload" href="/_app/immutable/entry/start.CeanPwG1.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/DMq4k4vE.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/BGz1ZPOG.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/MO6t-18J.js">
+		<link rel="modulepreload" href="/_app/immutable/entry/app.B-Sy2SWB.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/Dp1pzeXC.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/o-Z3qraM.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/BEriuYhv.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/DS4EplhS.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/gTfUchPb.js">
+		<link rel="modulepreload" href="/_app/immutable/chunks/CdHpk8Ca.js">
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">
+			<script>
+				{
+					__sveltekit_18toy37 = {
+						base: ""
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/_app/immutable/entry/start.CeanPwG1.js"),
+						import("/_app/immutable/entry/app.B-Sy2SWB.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+  </body>
+</html>

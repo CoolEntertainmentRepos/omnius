@@ -9,13 +9,20 @@ import type {
   MovieListData,
   MovieDetails,
   Movie,
-  MovieRating,
   StreamInfo,
   StreamStats,
 } from "./types";
 
-// Local torrent-server API - change this to your server URL
-export const API_URL = 'https://api.omnius.lol';
+// Dynamic server URL - configurable from settings
+let _serverUrl = localStorage.getItem('omnius_server_url') || 'https://api.omnius.lol';
+export function getApiUrl(): string { return _serverUrl; }
+export function setApiUrl(url: string) {
+  _serverUrl = url.replace(/\/+$/, '');
+  localStorage.setItem('omnius_server_url', _serverUrl);
+}
+
+// Keep backwards-compatible export
+export const API_URL = _serverUrl;
 
 /**
  * Fetch a list of movies from LOCAL torrent-server (cached)
@@ -37,7 +44,7 @@ export async function listMovies(params: ListMoviesParams, forceRefresh: boolean
       if (params.order_by) queryParams.set('order_by', params.order_by);
       if (params.year) queryParams.set('year', String(params.year));
 
-      const response = await fetch(`${API_URL}/api/v2/list_movies.json?${queryParams}`);
+      const response = await fetch(`${getApiUrl()}/api/v2/list_movies.json?${queryParams}`);
       const data = await response.json();
       return data.data as MovieListData;
     },
@@ -46,26 +53,7 @@ export async function listMovies(params: ListMoviesParams, forceRefresh: boolean
 }
 
 /**
- * Get detailed information about a specific movie from YTS directly via Tauri
- */
-export async function getMovieDetailsFromYTS(
-  movieId: number,
-  withCast: boolean = true,
-  withImages: boolean = true
-): Promise<MovieDetails> {
-  console.log("[getMovieDetailsFromYTS] Fetching from YTS, movieId:", movieId);
-  const details = await invoke<MovieDetails>("get_movie_details", {
-    movieId,
-    withCast,
-    withImages
-  });
-  console.log("[getMovieDetailsFromYTS] Success:", details.title);
-  return details;
-}
-
-/**
- * Get detailed information about a specific movie
- * Tries LOCAL server first, falls back to YTS if not found
+ * Get detailed information about a specific movie from server
  */
 export async function getMovieDetails(
   movieId: number,
@@ -78,36 +66,17 @@ export async function getMovieDetails(
     cacheKey,
     CACHE_TTL.MOVIE_DETAILS,
     async () => {
-      // Try local server first
-      try {
-        console.log("[getMovieDetails] Trying LOCAL server, movieId:", movieId);
-        const response = await fetch(`${API_URL}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.data?.movie) {
-            console.log("[getMovieDetails] Found in LOCAL:", data.data.movie.title);
-            return data.data.movie as MovieDetails;
-          }
-        }
-      } catch (err) {
-        console.log("[getMovieDetails] Local fetch failed, trying YTS...");
+      console.log("[getMovieDetails] Fetching from server, movieId:", movieId);
+      const response = await fetch(`${getApiUrl()}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch movie details: ${response.status}`);
       }
-
-      // Fall back to YTS
-      console.log("[getMovieDetails] Fetching from YTS, movieId:", movieId);
-      const details = await invoke<MovieDetails>("get_movie_details", {
-        movieId,
-        withCast,
-        withImages
-      });
-      console.log("[getMovieDetails] Found in YTS:", details.title);
-
-      // Sync movie to local DB in background (don't wait)
-      syncMovieToLocal(details).catch(err =>
-        console.warn("[getMovieDetails] Failed to sync to local DB:", err)
-      );
-
-      return details;
+      const data = await response.json();
+      if (data.data?.movie) {
+        console.log("[getMovieDetails] Found:", data.data.movie.title);
+        return data.data.movie as MovieDetails;
+      }
+      throw new Error('Movie not found');
     },
     forceRefresh
   );
@@ -123,7 +92,7 @@ export async function getMovieSuggestions(movieId: number, forceRefresh: boolean
     CACHE_TTL.SUGGESTIONS,
     async () => {
       console.log("[getMovieSuggestions] Fetching from LOCAL server, movieId:", movieId);
-      const response = await fetch(`${API_URL}/api/v2/movie_suggestions.json?movie_id=${movieId}`);
+      const response = await fetch(`${getApiUrl()}/api/v2/movie_suggestions.json?movie_id=${movieId}`);
       if (!response.ok) {
         console.warn("[getMovieSuggestions] Failed:", response.status);
         return [];
@@ -143,7 +112,7 @@ export async function getMovieSuggestions(movieId: number, forceRefresh: boolean
 export async function getFranchiseMovies(movieId: number): Promise<Movie[]> {
   try {
     console.log("[getFranchiseMovies] Fetching for movieId:", movieId);
-    const response = await fetch(`${API_URL}/api/v2/franchise_movies.json?movie_id=${movieId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/franchise_movies.json?movie_id=${movieId}`);
     if (!response.ok) {
       console.warn("[getFranchiseMovies] Failed:", response.status);
       return [];
@@ -182,19 +151,7 @@ export async function getStreamStats(infoHash: string): Promise<StreamStats> {
 }
 
 /**
- * Get movie rating from OMDB (IMDb, Rotten Tomatoes, Metacritic) - cached
- */
-export async function getMovieRating(imdbCode: string): Promise<MovieRating> {
-  const cacheKey = `rating_${imdbCode}`;
-  return cachedFetch(
-    cacheKey,
-    CACHE_TTL.MOVIE_DETAILS, // Same TTL as movie details
-    () => invoke<MovieRating>("get_movie_rating", { imdbCode })
-  );
-}
-
-/**
- * IMDB image from imdbapi.dev
+ * IMDB image from server proxy
  */
 export interface ImdbImage {
   url: string;
@@ -214,7 +171,7 @@ export async function getImdbImages(imdbCode: string): Promise<ImdbImage[]> {
     CACHE_TTL.MOVIE_DETAILS,
     async () => {
       try {
-        const response = await fetch(`https://api.imdbapi.dev/titles/${imdbCode}/images`);
+        const response = await fetch(`${getApiUrl()}/api/v2/imdb/images/${imdbCode}`);
         if (!response.ok) return [];
         const data = await response.json();
         return data.images || [];
@@ -263,14 +220,7 @@ export async function searchMovies(
   page: number = 1,
   limit: number = 20
 ): Promise<MovieListData> {
-  // Search uses YTS API directly via Tauri command for fresh results
-  return await invoke<MovieListData>("list_movies", {
-    params: {
-      query_term: query,
-      page,
-      limit,
-    },
-  });
+  return await listMovies({ query_term: query, page, limit });
 }
 
 /**
@@ -372,12 +322,24 @@ export interface SubtitleLanguage {
 
 /**
  * Search for subtitles by IMDB ID
+ * Checks server DB first (stored/torrent subtitles), falls back to external API
  * @param imdbId - The IMDB ID to search for
- * @param apiKey - Optional SubDL API key for better results
  * @param languages - Optional comma-separated language codes (e.g., "en,sq")
  */
-export async function searchSubtitles(imdbId: string, apiKey?: string, languages?: string): Promise<SubtitleSearchResult> {
-  return await invoke<SubtitleSearchResult>("search_subtitles", { imdbId, apiKey, languages });
+export async function searchSubtitles(imdbId: string, languages?: string): Promise<SubtitleSearchResult> {
+  try {
+    const params = new URLSearchParams({ imdb_id: imdbId });
+    if (languages) params.set('languages', languages);
+    const response = await fetch(`${getApiUrl()}/api/v2/subtitles/search?${params}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data as SubtitleSearchResult;
+    }
+  } catch (err) {
+    console.warn('[Subtitles] Server search failed, falling back to Tauri:', err);
+  }
+  // Fallback to Tauri invoke (direct SubDL)
+  return await invoke<SubtitleSearchResult>("search_subtitles", { imdbId, languages });
 }
 
 /**
@@ -392,9 +354,24 @@ export interface SubtitleDownloadResult {
 }
 
 /**
- * Download a subtitle file and convert to VTT data URL
+ * Download a subtitle file and convert to VTT data URL.
+ * For server-stored subtitles, fetches directly from server.
  */
 export async function downloadSubtitle(downloadUrl: string): Promise<SubtitleDownloadResult> {
+  // Server-stored subtitles: URL starts with /api/v2/subtitles/stored/
+  if (downloadUrl.startsWith('/api/v2/subtitles/stored/')) {
+    try {
+      const response = await fetch(`${getApiUrl()}${downloadUrl}`);
+      if (response.ok) {
+        const vttText = await response.text();
+        const base64 = btoa(unescape(encodeURIComponent(vttText)));
+        return { vtt_data_url: `data:text/vtt;base64,${base64}` };
+      }
+    } catch (err) {
+      console.warn('[Subtitles] Failed to fetch stored subtitle:', err);
+    }
+  }
+  // External subtitles: download via Tauri (handles decompression/conversion)
   return await invoke<SubtitleDownloadResult>("download_subtitle", { downloadUrl });
 }
 
@@ -406,9 +383,13 @@ export async function checkStreamReady(streamUrl: string): Promise<boolean> {
 }
 
 /**
- * Download a subtitle, serve it via the local HTTP server, return its URL
+ * Download a subtitle, serve it via the local HTTP server, return its URL.
+ * For server-stored subtitles, returns the full server URL directly.
  */
 export async function serveSubtitle(downloadUrl: string): Promise<string> {
+  if (downloadUrl.startsWith('/api/v2/subtitles/stored/')) {
+    return `${getApiUrl()}${downloadUrl}`;
+  }
   return await invoke<string>("serve_subtitle", { downloadUrl });
 }
 
@@ -423,16 +404,36 @@ export interface TorrentFile {
 }
 
 /**
- * List files in a torrent (used to find embedded subtitles)
+ * List files in a torrent (used to find embedded subtitles).
+ * Tries server first, falls back to Tauri.
  */
 export async function listTorrentFiles(infoHash: string): Promise<TorrentFile[]> {
+  try {
+    const response = await fetch(`${getApiUrl()}/api/v2/torrent_files?hash=${infoHash}`);
+    if (response.ok) {
+      return await response.json() as TorrentFile[];
+    }
+  } catch {
+    // Server might not have this torrent loaded yet
+  }
   return await invoke<TorrentFile[]>("list_torrent_files", { infoHash });
 }
 
 /**
- * Search subtitles by release/file name for better sync matching
+ * Search subtitles by release/file name for better sync matching.
+ * Tries server first, falls back to Tauri.
  */
 export async function searchSubtitlesByFilename(filename: string, languages?: string): Promise<SubtitleSearchResult> {
+  try {
+    const params = new URLSearchParams({ filename });
+    if (languages) params.set('languages', languages);
+    const response = await fetch(`${getApiUrl()}/api/v2/subtitles/search_by_filename?${params}`);
+    if (response.ok) {
+      return await response.json() as SubtitleSearchResult;
+    }
+  } catch (err) {
+    console.warn('[Subtitles] Server filename search failed, falling back to Tauri:', err);
+  }
   return await invoke<SubtitleSearchResult>("search_subtitles_by_filename", { filename, languages });
 }
 
@@ -485,7 +486,7 @@ export async function getLocalRatings(imdbCodes: string[]): Promise<Record<strin
   if (imdbCodes.length === 0) return {};
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/get_ratings`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/get_ratings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(imdbCodes),
@@ -512,7 +513,7 @@ export async function syncMovieToLocal(movie: Movie | MovieDetails): Promise<{ s
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/sync_movie`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/sync_movie`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imdb_code: movie.imdb_code }),
@@ -545,7 +546,7 @@ export async function syncMovieToLocal(movie: Movie | MovieDetails): Promise<{ s
  */
 export async function refreshMovieData(movieId: number): Promise<void> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/refresh_movie`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/refresh_movie`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ movie_id: movieId }),
@@ -564,7 +565,7 @@ export async function refreshMovieData(movieId: number): Promise<void> {
  */
 export async function syncMoviesToLocal(movies: Movie[]): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/sync_movies`, {
+    await fetch(`${getApiUrl()}/api/v2/sync_movies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(movies),
@@ -603,7 +604,7 @@ export interface CuratedList {
  */
 export async function getCuratedLists(): Promise<CuratedList[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/curated_lists.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/curated_lists.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -619,7 +620,7 @@ export async function getCuratedLists(): Promise<CuratedList[]> {
  */
 export async function getCuratedList(slug: string): Promise<CuratedList | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/curated_list.json?slug=${slug}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/curated_list.json?slug=${slug}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -652,7 +653,7 @@ export async function listSeries(params: ListSeriesParams = {}): Promise<SeriesL
     if (params.year) queryParams.set('year', params.year.toString());
     if (params.maximum_year) queryParams.set('maximum_year', params.maximum_year.toString());
 
-    const response = await fetch(`${API_URL}/api/v2/list_series.json?${queryParams}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_series.json?${queryParams}`);
     if (!response.ok) throw new Error('Failed to fetch series');
 
     const data = await response.json();
@@ -668,7 +669,7 @@ export async function listSeries(params: ListSeriesParams = {}): Promise<SeriesL
  */
 export async function getSeriesDetails(seriesId: number): Promise<Series | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/series_details.json?series_id=${seriesId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/series_details.json?series_id=${seriesId}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -684,7 +685,7 @@ export async function getSeriesDetails(seriesId: number): Promise<Series | null>
  */
 export async function getSeasonEpisodes(seriesId: number, season: number): Promise<Episode[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/season_episodes.json?series_id=${seriesId}&season=${season}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/season_episodes.json?series_id=${seriesId}&season=${season}`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -704,7 +705,7 @@ export async function searchSeries(query: string, page: number = 1, limit: numbe
   queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
 
-  const response = await fetch(`${API_URL}/api/v2/list_series.json?${queryParams}`);
+  const response = await fetch(`${getApiUrl()}/api/v2/list_series.json?${queryParams}`);
   const data = await response.json();
   return data.data as SeriesListData;
 }
@@ -758,7 +759,7 @@ export interface HomeData {
  */
 export async function getHomeData(): Promise<HomeData> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/home.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/home.json`);
     if (!response.ok) throw new Error('Failed to fetch home data');
 
     const data = await response.json();
@@ -786,7 +787,7 @@ export interface TorrentStats {
  */
 export async function getTorrentStats(hash: string): Promise<TorrentStats | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/torrent_stats?hash=${hash}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/torrent_stats?hash=${hash}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -805,7 +806,7 @@ export async function getMultipleTorrentStats(hashes: string[]): Promise<Record<
 
   try {
     const params = hashes.map(h => `hashes=${h}`).join('&');
-    const response = await fetch(`${API_URL}/api/v2/torrent_stats?${params}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/torrent_stats?${params}`);
     if (!response.ok) return {};
 
     const data = await response.json();
@@ -828,7 +829,7 @@ export interface RecordViewParams {
 
 export async function recordView(params: RecordViewParams): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/view`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/view`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -867,7 +868,7 @@ export interface StreamStartParams {
 
 export async function streamStart(params: StreamStartParams): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/start`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -886,7 +887,7 @@ export async function streamStart(params: StreamStartParams): Promise<void> {
 // Stream tracking - Heartbeat (call every 30-60 seconds while streaming)
 export async function streamHeartbeat(): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/heartbeat`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -901,7 +902,7 @@ export async function streamHeartbeat(): Promise<void> {
 // Stream tracking - End
 export async function streamEnd(): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/end`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/end`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -922,7 +923,7 @@ export async function getTopMovies(days: number = 7, genre?: string, limit: numb
     });
     if (genre) params.set('genre', genre);
 
-    const response = await fetch(`${API_URL}/api/v2/analytics/top-movies?${params}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/analytics/top-movies?${params}`);
     if (!response.ok) return [];
 
     return await response.json();
@@ -939,7 +940,7 @@ export async function getTopMovies(days: number = 7, genre?: string, limit: numb
  */
 export async function getComingSoonMovies(): Promise<Movie[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/list_movies.json?status=coming_soon&limit=20`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_movies.json?status=coming_soon&limit=20`);
     if (!response.ok) return [];
     const data = await response.json();
     return data.data?.movies || [];
@@ -957,7 +958,7 @@ export async function checkAvailability(imdbCodes: string[]): Promise<Record<str
   if (imdbCodes.length === 0) return {};
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/check_availability?imdb_codes=${imdbCodes.join(',')}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/check_availability?imdb_codes=${imdbCodes.join(',')}`);
     if (!response.ok) return {};
     const data = await response.json();
     return data.data || {};
@@ -983,7 +984,7 @@ export async function listChannels(params: ListChannelsParams = {}): Promise<Cha
     if (params.category) queryParams.set('category', params.category);
     if (params.query_term) queryParams.set('query_term', params.query_term);
 
-    const response = await fetch(`${API_URL}/api/v2/list_channels.json?${queryParams}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_channels.json?${queryParams}`);
     if (!response.ok) throw new Error('Failed to fetch channels');
 
     const data = await response.json();
@@ -999,7 +1000,7 @@ export async function listChannels(params: ListChannelsParams = {}): Promise<Cha
  */
 export async function getChannelDetails(channelId: string): Promise<Channel | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_details.json?channel_id=${channelId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_details.json?channel_id=${channelId}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -1015,7 +1016,7 @@ export async function getChannelDetails(channelId: string): Promise<Channel | nu
  */
 export async function getChannelCountries(): Promise<ChannelCountry[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_countries.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_countries.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1031,7 +1032,7 @@ export async function getChannelCountries(): Promise<ChannelCountry[]> {
  */
 export async function getChannelCategories(): Promise<ChannelCategory[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_categories.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_categories.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1047,7 +1048,7 @@ export async function getChannelCategories(): Promise<ChannelCategory[]> {
  */
 export async function getChannelsByCountry(country: string, limit: number = 50): Promise<Channel[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channels_by_country.json?country=${country}&limit=${limit}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channels_by_country.json?country=${country}&limit=${limit}`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1067,7 +1068,7 @@ export async function searchChannels(query: string, page: number = 1, limit: num
   queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
 
-  const response = await fetch(`${API_URL}/api/v2/list_channels.json?${queryParams}`);
+  const response = await fetch(`${getApiUrl()}/api/v2/list_channels.json?${queryParams}`);
   const data = await response.json();
   return data.data as ChannelListData;
 }
@@ -1089,7 +1090,7 @@ export interface UnifiedSearchResponse {
  */
 export async function unifiedSearch(query: string, limit: number = 10): Promise<UnifiedSearchResponse> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/search.json?query=${encodeURIComponent(query)}&limit=${limit}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/search.json?query=${encodeURIComponent(query)}&limit=${limit}`);
     if (!response.ok) throw new Error('Search failed');
 
     const data = await response.json();
@@ -1098,4 +1099,21 @@ export async function unifiedSearch(query: string, limit: number = 10): Promise<
     console.warn('[unifiedSearch] Failed:', err);
     return { query, movies: [], series: [], channels: [] };
   }
+}
+
+// ============ Server URL Management ============
+
+/**
+ * Get server URL from Tauri backend
+ */
+export async function getServerUrl(): Promise<string> {
+  return await invoke<string>("get_server_url");
+}
+
+/**
+ * Set server URL in both Tauri backend and frontend
+ */
+export async function setServerUrl(url: string): Promise<void> {
+  await invoke<void>("set_server_url", { url });
+  setApiUrl(url);
 }

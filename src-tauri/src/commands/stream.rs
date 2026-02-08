@@ -1,86 +1,57 @@
 use std::sync::Arc;
-
 use tauri::State;
 use tokio::sync::RwLock;
 
-use crate::torrent::{StreamInfo, StreamStats, TorrentManager};
-use crate::subtitles::SubtitleClient;
+use crate::server::OmniusClient;
+use crate::server::types::*;
 
-pub type TorrentManagerState = Arc<RwLock<Option<Arc<TorrentManager>>>>;
+pub type OmniusClientState = Arc<RwLock<OmniusClient>>;
 
 #[tauri::command]
 pub async fn start_stream(
-    manager: State<'_, TorrentManagerState>,
+    client: State<'_, OmniusClientState>,
     torrent_hash: String,
     file_index: Option<i32>,
 ) -> Result<StreamInfo, String> {
     println!("[start_stream] Starting stream for hash: {}, file_index: {:?}", torrent_hash, file_index);
 
-    let guard = manager.read().await;
-    println!("[start_stream] Got manager lock, checking if initialized...");
+    let client = client.read().await;
+    let mut info = client.start_stream(&torrent_hash, file_index.map(|i| i as usize)).await?;
 
-    let manager = match guard.as_ref() {
-        Some(m) => {
-            println!("[start_stream] TorrentManager is available");
-            m
-        }
-        None => {
-            println!("[start_stream] ERROR: TorrentManager not initialized!");
-            return Err("TorrentManager not initialized".to_string());
-        }
-    };
-
-    // Build magnet URI from hash
-    let magnet_uri = format!(
-        "magnet:?xt=urn:btih:{}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://torrent.gresille.org:80/announce&tr=udp://p4p.arenabg.com:1337&tr=udp://tracker.leechers-paradise.org:6969",
-        torrent_hash
-    );
-
-    println!("[start_stream] Built magnet URI, adding torrent...");
-
-    match manager.start_stream(&magnet_uri, file_index.map(|i| i as usize)).await {
-        Ok(info) => {
-            println!("[start_stream] Success! Stream URL: {}", info.stream_url);
-            Ok(info)
-        }
-        Err(e) => {
-            println!("[start_stream] Error starting stream: {}", e);
-            Err(e)
-        }
+    // Make stream_url absolute using server base URL
+    if info.stream_url.starts_with('/') {
+        info.stream_url = format!("{}{}", client.base_url(), info.stream_url);
     }
+
+    println!("[start_stream] Success! Stream URL: {}", info.stream_url);
+    Ok(info)
 }
 
 #[tauri::command]
 pub async fn get_stream_status(
-    manager: State<'_, TorrentManagerState>,
+    client: State<'_, OmniusClientState>,
     info_hash: String,
-) -> Result<StreamStats, String> {
+) -> Result<StreamStatus, String> {
     println!("[get_stream_status] Getting status for: {}", info_hash);
-    let guard = manager.read().await;
-    let manager = guard.as_ref().ok_or("TorrentManager not initialized")?;
-
-    let result = manager.get_stream_status(&info_hash).await;
-    println!("[get_stream_status] Result: {:?}", result);
-    result
+    let client = client.read().await;
+    client.get_stream_status(&info_hash).await
 }
 
 #[tauri::command]
 pub async fn stop_stream(
-    manager: State<'_, TorrentManagerState>,
+    client: State<'_, OmniusClientState>,
     info_hash: String,
 ) -> Result<(), String> {
-    let guard = manager.read().await;
-    let manager = guard.as_ref().ok_or("TorrentManager not initialized")?;
-
-    manager.stop_stream(&info_hash).await
+    let client = client.read().await;
+    client.stop_stream(&info_hash).await
 }
 
 /// Check if a stream URL is serving data (Range request bytes=0-0)
 #[tauri::command]
 pub async fn check_stream_ready(stream_url: String) -> Result<bool, String> {
     println!("[check_stream_ready] Checking: {}", stream_url);
-    let client = reqwest::Client::new();
-    match client
+    let http_client = reqwest::Client::new();
+    match http_client
         .get(&stream_url)
         .header("Range", "bytes=0-0")
         .send()
@@ -98,46 +69,26 @@ pub async fn check_stream_ready(stream_url: String) -> Result<bool, String> {
     }
 }
 
-/// Download a subtitle, store it in the stream server, return its HTTP URL
+/// Return the server subtitle download URL (no local download needed)
 #[tauri::command]
 pub async fn serve_subtitle(
-    manager: State<'_, TorrentManagerState>,
-    subtitle_client: State<'_, SubtitleClient>,
+    client: State<'_, OmniusClientState>,
     download_url: String,
 ) -> Result<String, String> {
-    println!("[serve_subtitle] Downloading from: {}", download_url);
-
-    // Download and convert to VTT
-    let vtt_content = subtitle_client.download_subtitle_raw(&download_url).await?;
-
-    // Store in the stream server
-    let guard = manager.read().await;
-    let mgr = guard.as_ref().ok_or("TorrentManager not initialized")?;
-
-    // Use a hash of the URL as the ID
-    let id = format!("{:x}", md5_hash(&download_url));
-    let subtitle_url = mgr.store_subtitle(id, vtt_content).await;
-
+    println!("[serve_subtitle] Building server URL for: {}", download_url);
+    let client = client.read().await;
+    let subtitle_url = client.subtitle_download_url(&download_url);
     println!("[serve_subtitle] Serving at: {}", subtitle_url);
     Ok(subtitle_url)
 }
 
-/// Simple hash for subtitle IDs (not cryptographic, just for uniqueness)
-fn md5_hash(input: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    input.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// List all files in a torrent (for finding embedded subtitles)
+/// List all files in a torrent
 #[tauri::command]
 pub async fn list_torrent_files(
-    manager: State<'_, TorrentManagerState>,
+    client: State<'_, OmniusClientState>,
     info_hash: String,
-) -> Result<Vec<crate::torrent::TorrentFile>, String> {
+) -> Result<Vec<TorrentFile>, String> {
     println!("[list_torrent_files] Listing files for: {}", info_hash);
-    let guard = manager.read().await;
-    let manager = guard.as_ref().ok_or("TorrentManager not initialized")?;
-    manager.list_files(&info_hash).await
+    let client = client.read().await;
+    client.list_torrent_files(&info_hash).await
 }

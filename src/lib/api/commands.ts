@@ -45,6 +45,9 @@ export async function listMovies(params: ListMoviesParams, forceRefresh: boolean
       if (params.year) queryParams.set('year', String(params.year));
 
       const response = await fetch(`${getApiUrl()}/api/v2/list_movies.json?${queryParams}`);
+      if (!response.ok) {
+        throw new Error(`Server error ${response.status}: ${response.statusText}`);
+      }
       const data = await response.json();
       return data.data as MovieListData;
     },
@@ -518,6 +521,9 @@ export async function syncMovieToLocal(movie: Movie | MovieDetails): Promise<{ s
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imdb_code: movie.imdb_code }),
     });
+    if (!response.ok) {
+      throw new Error(`Server error ${response.status}: ${response.statusText}`);
+    }
     const data = await response.json();
     if (data.data?.exists) {
       console.log('[syncMovieToLocal] Already exists:', movie.title);
@@ -551,6 +557,9 @@ export async function refreshMovieData(movieId: number): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ movie_id: movieId }),
     });
+    if (!response.ok) {
+      throw new Error(`Server error ${response.status}: ${response.statusText}`);
+    }
     const data = await response.json();
     if (data.status === 'ok') {
       console.log('[refreshMovieData] Refreshed movie ID:', movieId);
@@ -706,6 +715,9 @@ export async function searchSeries(query: string, page: number = 1, limit: numbe
   queryParams.set('limit', String(limit));
 
   const response = await fetch(`${getApiUrl()}/api/v2/list_series.json?${queryParams}`);
+  if (!response.ok) {
+    throw new Error(`Server error ${response.status}: ${response.statusText}`);
+  }
   const data = await response.json();
   return data.data as SeriesListData;
 }
@@ -817,37 +829,6 @@ export async function getMultipleTorrentStats(hashes: string[]): Promise<Record<
   }
 }
 
-// Analytics - Record a view
-export interface RecordViewParams {
-  contentType: 'movie' | 'series' | 'episode';
-  contentId: number;
-  imdbCode?: string;
-  duration?: number;  // seconds watched
-  completed?: boolean;
-  quality?: string;
-}
-
-export async function recordView(params: RecordViewParams): Promise<void> {
-  try {
-    await fetch(`${getApiUrl()}/api/v2/analytics/view`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content_type: params.contentType,
-        content_id: params.contentId,
-        imdb_code: params.imdbCode || '',
-        device_id: getDeviceId(),
-        duration: params.duration || 0,
-        completed: params.completed || false,
-        quality: params.quality || '',
-      }),
-    });
-  } catch (err) {
-    // Silent fail - analytics shouldn't break the app
-    console.warn('[recordView] Failed:', err);
-  }
-}
-
 // Helper to get or create device ID
 function getDeviceId(): string {
   let deviceId = localStorage.getItem('analytics_device_id');
@@ -858,59 +839,16 @@ function getDeviceId(): string {
   return deviceId;
 }
 
-// Stream tracking - Start
-export interface StreamStartParams {
-  contentType: 'movie' | 'series' | 'episode';
-  contentId: number;
-  imdbCode?: string;
-  quality?: string;
-}
-
-export async function streamStart(params: StreamStartParams): Promise<void> {
+// Unified analytics event tracker - single POST /api/v2/analytics
+export async function trackEvent(event: string, data: Record<string, any> = {}): Promise<void> {
   try {
-    await fetch(`${getApiUrl()}/api/v2/analytics/stream/start`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: getDeviceId(),
-        content_type: params.contentType,
-        content_id: params.contentId,
-        imdb_code: params.imdbCode || '',
-        quality: params.quality || '',
-      }),
+      body: JSON.stringify({ event, device_id: getDeviceId(), ...data }),
     });
   } catch (err) {
-    console.warn('[streamStart] Failed:', err);
-  }
-}
-
-// Stream tracking - Heartbeat (call every 30-60 seconds while streaming)
-export async function streamHeartbeat(): Promise<void> {
-  try {
-    await fetch(`${getApiUrl()}/api/v2/analytics/stream/heartbeat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: getDeviceId(),
-      }),
-    });
-  } catch (err) {
-    console.warn('[streamHeartbeat] Failed:', err);
-  }
-}
-
-// Stream tracking - End
-export async function streamEnd(): Promise<void> {
-  try {
-    await fetch(`${getApiUrl()}/api/v2/analytics/stream/end`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: getDeviceId(),
-      }),
-    });
-  } catch (err) {
-    console.warn('[streamEnd] Failed:', err);
+    console.warn(`[analytics] ${event} failed:`, err);
   }
 }
 
@@ -1069,6 +1007,9 @@ export async function searchChannels(query: string, page: number = 1, limit: num
   queryParams.set('limit', String(limit));
 
   const response = await fetch(`${getApiUrl()}/api/v2/list_channels.json?${queryParams}`);
+  if (!response.ok) {
+    throw new Error(`Server error ${response.status}: ${response.statusText}`);
+  }
   const data = await response.json();
   return data.data as ChannelListData;
 }

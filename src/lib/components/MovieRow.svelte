@@ -40,7 +40,7 @@
     goto(`/movie/${movie.id}`);
   }
 
-  // Handle keyboard navigation for D-pad/remote
+  // Handle keyboard navigation for arrow keys
   function handleCardKeydown(e: KeyboardEvent, index: number) {
     const cards = scrollContainer?.querySelectorAll<HTMLElement>('.movie-card');
     if (!cards) return;
@@ -48,21 +48,21 @@
     switch (e.key) {
       case 'ArrowLeft':
         e.preventDefault();
-        e.stopPropagation(); // Prevent spatial-nav from interfering
+        e.stopPropagation();
         if (index > 0) {
           cards[index - 1].focus();
         }
         break;
       case 'ArrowRight':
         e.preventDefault();
-        e.stopPropagation(); // Prevent spatial-nav from interfering
+        e.stopPropagation();
         if (index < cards.length - 1) {
           cards[index + 1].focus();
         }
         break;
       case 'ArrowUp':
       case 'ArrowDown':
-        e.stopPropagation(); // Prevent spatial-nav from interfering
+        e.stopPropagation();
         // Find the closest row and navigate to it
         const currentRow = scrollContainer?.closest('.movie-row');
         const allRows = document.querySelectorAll('.movie-row');

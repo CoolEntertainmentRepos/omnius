@@ -33,7 +33,7 @@
       }
       checking = false;
     } catch {
-      // Fallback to manual check (for Android TV or if plugin not available)
+      // Fallback to manual check (if updater plugin not available)
       isDesktop = false;
       try {
         const info = await checkForUpdates();
@@ -318,7 +318,7 @@
     height: 22px;
   }
 
-  /* TV Styles */
+  /* Large screens */
   @media (min-width: 1920px) {
     .modal {
       max-width: 560px;

@@ -158,9 +158,9 @@
     }
   }
 
-  // Reload when series ID changes
+  // Reload when series ID changes (skip invalid IDs)
   $effect(() => {
-    if (seriesId) {
+    if (seriesId && seriesId > 0) {
       loadSeries(seriesId);
     }
   });

@@ -12,7 +12,6 @@
   import SearchSection from "$lib/components/SearchSection.svelte";
   import { listMovies, getMovieRating, getLocalRatings, listSeries, getTopRatedSeries, getContinuingSeries, getCuratedLists, getCuratedList, getHomeData, getImdbImages, searchMovies, searchSeries, searchChannels, listChannels, getChannelCountries, getChannelCategories, type CuratedList, type HomeSection } from "$lib/api/commands";
   import { favoritesStore } from "$lib/stores/favorites.svelte";
-  import { makeFocusable, addSection } from "$lib/utils/tvNavigation";
   import type { Movie, MovieRating, Series, ListSeriesParams, Channel } from "$lib/api/types";
 
   // Category rows data
@@ -176,33 +175,6 @@
     } else {
       await loadHomeContent();
     }
-    // Refresh focusable elements and set initial focus
-    setTimeout(() => {
-      makeFocusable();
-
-      // Add sidebar section with navigation to content on RIGHT
-      addSection('sidebar', '.sidebar .nav-item', {
-        restrict: 'self-first',
-        leaveFor: {
-          right: '.movie-card, .featured-actions button',
-          down: '.movie-card, .featured-actions button'
-        }
-      });
-
-      // Add content section
-      addSection('content', '.main-content button, .main-content a, .movie-card', {
-        restrict: 'self-first',
-        leaveFor: {
-          left: '.sidebar .nav-item.active'
-        }
-      });
-
-      // Focus on first movie card by default for quick access
-      const firstMovieCard = document.querySelector<HTMLElement>('.movie-card');
-      if (firstMovieCard) {
-        firstMovieCard.focus();
-      }
-    }, 300);
 
     // Cleanup on unmount
     return () => {
@@ -758,6 +730,11 @@
   }
 
   async function handleNavClick(nav: string) {
+    if (nav === "settings") {
+      goto("/settings");
+      return;
+    }
+
     activeNav = nav;
     showSearch = nav === "search";
     selectedGenre = null;
@@ -964,11 +941,11 @@
 
   <!-- Main Content -->
   <main class="main-content">
-    {#if loading && !loadError}
+    {#if loading && !loadError && activeNav === "home"}
       <div class="loading-page">
         <div class="spinner"></div>
       </div>
-    {:else if loadError}
+    {:else if loadError && activeNav === "home"}
       <div class="error-page">
         <svg viewBox="0 0 24 24" fill="currentColor" class="error-icon">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>

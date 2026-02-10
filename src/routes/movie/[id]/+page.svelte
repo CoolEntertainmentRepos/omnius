@@ -119,9 +119,9 @@
     }
   }
 
-  // Reload when movie ID changes
+  // Reload when movie ID changes (skip invalid IDs)
   $effect(() => {
-    if (movieId) {
+    if (movieId && movieId > 0) {
       loadMovie(movieId);
     }
   });

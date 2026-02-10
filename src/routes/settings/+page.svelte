@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
-  import { getStorageInfo, clearDownloadedFiles, getAppVersion, getSubtitleLanguages, type StorageInfo, type SubtitleLanguage } from "$lib/api/commands";
+  import { getStorageInfo, clearDownloadedFiles, getAppVersion, getSubtitleLanguages, getApiUrl, setApiUrl, getDefaultApiUrl, type StorageInfo, type SubtitleLanguage } from "$lib/api/commands";
   import { clearAllCaches } from "$lib/api/cache";
 
   let storageInfo = $state<StorageInfo | null>(null);
@@ -10,6 +10,11 @@
   let isClearing = $state(false);
   let error = $state<string | null>(null);
   let successMessage = $state<string | null>(null);
+
+  // Server URL settings
+  let serverUrl = $state<string>(getApiUrl());
+  let serverStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
+  let serverStatusMessage = $state<string>('');
 
   // Subtitle language settings
   let availableLanguages = $state<SubtitleLanguage[]>([]);
@@ -22,12 +27,6 @@
       if (savedLang) preferredLanguage = savedLang;
     }
     await loadData();
-    if (browser) {
-      setTimeout(() => {
-        const langSelect = document.getElementById('lang-select');
-        if (langSelect) langSelect.focus();
-      }, 200);
-    }
   });
 
   async function loadData() {
@@ -90,6 +89,43 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
+  async function handleTestConnection() {
+    const url = serverUrl.trim().replace(/\/+$/, '');
+    if (!url) return;
+    serverStatus = 'testing';
+    serverStatusMessage = '';
+    try {
+      const response = await fetch(`${url}/api/v2/home.json`, { signal: AbortSignal.timeout(5000) });
+      if (response.ok) {
+        serverStatus = 'success';
+        serverStatusMessage = 'Connected';
+      } else {
+        serverStatus = 'error';
+        serverStatusMessage = `HTTP ${response.status}`;
+      }
+    } catch (err) {
+      serverStatus = 'error';
+      serverStatusMessage = 'Connection failed';
+    }
+  }
+
+  function handleSaveServer() {
+    setApiUrl(serverUrl);
+    clearAllCaches();
+    successMessage = "Server URL saved. Data will refresh.";
+    setTimeout(() => successMessage = null, 3000);
+  }
+
+  function handleResetServer() {
+    serverUrl = getDefaultApiUrl();
+    setApiUrl(serverUrl);
+    clearAllCaches();
+    serverStatus = 'idle';
+    serverStatusMessage = '';
+    successMessage = "Server URL reset to default.";
+    setTimeout(() => successMessage = null, 3000);
+  }
+
   function handleBack() {
     history.back();
   }
@@ -133,63 +169,96 @@
         <div class="success-message">{successMessage}</div>
       {/if}
 
-      <div class="info-section">
-        <div class="info-row">
-          <span class="info-label">Subtitle Language</span>
-          <select
-            id="lang-select"
-            class="lang-select"
-            value={preferredLanguage}
-            onchange={handleLanguageChange}
-            tabindex="0"
-          >
-            <option value="">Off (No auto-load)</option>
-            {#each availableLanguages as lang (lang.code)}
-              <option value={lang.code}>{lang.name}</option>
-            {/each}
-          </select>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Cache Size</span>
-          <span class="info-value">{storageInfo ? formatBytes(storageInfo.used_bytes) : "0 B"} ({storageInfo?.file_count || 0} files)</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Free Space</span>
-          <span class="info-value">{storageInfo ? formatBytes(storageInfo.free_bytes) : "?"}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Version</span>
-          <span class="info-value">{appVersion}</span>
-        </div>
+      <!-- Server -->
+      <h2 class="section-title">Server</h2>
+      <input
+        type="url"
+        class="server-input"
+        bind:value={serverUrl}
+        placeholder={getDefaultApiUrl()}
+        tabindex="0"
+      />
+      <div class="server-actions">
+        <button class="server-btn primary" onclick={handleTestConnection} disabled={serverStatus === 'testing'}>
+          {#if serverStatus === 'testing'}
+            <div class="btn-spinner"></div>
+          {:else}
+            Test Connection
+          {/if}
+        </button>
+        <button class="server-btn accent" onclick={handleSaveServer}>Save</button>
+        <button class="server-btn" onclick={handleResetServer}>Reset</button>
+        {#if serverStatusMessage}
+          <span class="server-status {serverStatus}">
+            {#if serverStatus === 'success'}
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            {:else if serverStatus === 'error'}
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            {/if}
+            {serverStatusMessage}
+          </span>
+        {/if}
       </div>
 
-      <button
-        class="clear-btn"
-        id="clear-btn"
-        onclick={handleClearCache}
-        disabled={isClearing || (storageInfo?.used_bytes === 0)}
-        data-default-focus
-      >
-        {#if isClearing}
-          <div class="btn-spinner"></div>
-          Clearing...
-        {:else}
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-          </svg>
-          Clear Downloads
-        {/if}
-      </button>
+      <!-- Playback -->
+      <h2 class="section-title">Playback</h2>
+      <div class="info-row">
+        <span class="info-label">Subtitle Language</span>
+        <select
+          id="lang-select"
+          class="lang-select"
+          value={preferredLanguage}
+          onchange={handleLanguageChange}
+          tabindex="0"
+        >
+          <option value="">Off (No auto-load)</option>
+          {#each availableLanguages as lang (lang.code)}
+            <option value={lang.code}>{lang.name}</option>
+          {/each}
+        </select>
+      </div>
 
-      <button
-        class="clear-btn api-cache-btn"
-        onclick={handleClearApiCache}
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-        </svg>
-        Refresh Movie Data
-      </button>
+      <!-- Storage -->
+      <h2 class="section-title">Storage</h2>
+      <div class="info-row">
+        <span class="info-label">Cache Size</span>
+        <span class="info-value">{storageInfo ? formatBytes(storageInfo.used_bytes) : "0 B"} ({storageInfo?.file_count || 0} files)</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Free Space</span>
+        <span class="info-value">{storageInfo ? formatBytes(storageInfo.free_bytes) : "?"}</span>
+      </div>
+      <div class="action-row">
+        <button
+          class="action-btn danger"
+          id="clear-btn"
+          onclick={handleClearCache}
+          disabled={isClearing || (storageInfo?.used_bytes === 0)}
+        >
+          {#if isClearing}
+            <div class="btn-spinner"></div>
+            Clearing...
+          {:else}
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+            Clear Downloads
+          {/if}
+        </button>
+        <button class="action-btn" onclick={handleClearApiCache}>
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+          </svg>
+          Refresh Data
+        </button>
+      </div>
+
+      <!-- About -->
+      <h2 class="section-title">About</h2>
+      <div class="info-row last">
+        <span class="info-label">Version</span>
+        <span class="info-value">{appVersion}</span>
+      </div>
     {/if}
   </main>
 </div>
@@ -229,10 +298,13 @@
     transition: all 0.15s;
   }
 
-  .back-btn:focus {
+  .back-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .back-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px #e50914;
-    transform: scale(1.1);
+    box-shadow: 0 0 0 2px #e50914;
   }
 
   .back-btn svg {
@@ -296,28 +368,36 @@
     font-size: 0.95rem;
   }
 
-  .info-section {
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 12px;
-    padding: 8px 0;
-    margin-bottom: 24px;
+  /* Section titles */
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #555;
+    margin: 24px 0 10px 2px;
   }
 
+  .section-title:first-of-type {
+    margin-top: 0;
+  }
+
+  /* Info rows */
   .info-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 13px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .info-row:last-child {
+  .info-row.last {
     border-bottom: none;
   }
 
   .info-label {
     font-size: 0.95rem;
-    color: #888;
+    color: #999;
   }
 
   .info-value {
@@ -326,26 +406,126 @@
     font-weight: 500;
   }
 
-  .lang-select {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    padding: 10px 14px;
+  /* Server */
+  .server-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 11px 14px;
     color: #fff;
-    font-size: 0.95rem;
-    min-width: 160px;
+    font-size: 0.9rem;
+    font-family: monospace;
+    transition: all 0.15s;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+  }
+
+  .server-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #e50914;
+    border-color: #e50914;
+  }
+
+  .server-input::placeholder {
+    color: #444;
+  }
+
+  .server-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .server-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #888;
+  }
+
+  .server-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ccc;
+  }
+
+  .server-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #e50914;
+  }
+
+  .server-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .server-btn.primary {
+    color: #ccc;
+  }
+
+  .server-btn.accent {
+    background: #e50914;
+    border-color: #e50914;
+    color: #fff;
+  }
+
+  .server-btn.accent:hover {
+    background: #f6121d;
+  }
+
+  .server-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    margin-left: auto;
+  }
+
+  .server-status svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .server-status.success {
+    color: #4caf50;
+  }
+
+  .server-status.error {
+    color: #f44336;
+  }
+
+  /* Language select */
+  .lang-select {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #fff;
+    font-size: 0.9rem;
+    min-width: 150px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .lang-select:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .lang-select:focus {
     outline: none;
-    box-shadow: 0 0 0 3px #e50914;
-    background: rgba(229, 9, 20, 0.2);
+    box-shadow: 0 0 0 2px #e50914;
     border-color: #e50914;
   }
 
@@ -354,57 +534,70 @@
     color: #fff;
   }
 
+  /* Action buttons row */
+  .action-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
 
-  .clear-btn {
+  .action-btn {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    width: 100%;
-    padding: 16px 24px;
-    background: rgba(229, 9, 20, 0.15);
-    border: 2px solid rgba(229, 9, 20, 0.4);
-    border-radius: 10px;
-    color: #fff;
-    font-size: 1rem;
-    font-weight: 600;
+    gap: 8px;
+    padding: 11px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: #bbb;
+    font-size: 0.85rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
   }
 
-  .clear-btn:hover:not(:disabled) {
-    background: rgba(229, 9, 20, 0.25);
-    border-color: rgba(229, 9, 20, 0.6);
+  .action-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
   }
 
-  .clear-btn:focus {
+  .action-btn:focus {
     outline: none;
-    box-shadow: 0 0 0 4px #e50914;
-    transform: scale(1.02);
-    background: rgba(229, 9, 20, 0.35);
-    border-color: #e50914;
+    box-shadow: 0 0 0 2px #e50914;
   }
 
-  .clear-btn:disabled {
-    opacity: 0.4;
+  .action-btn:disabled {
+    opacity: 0.35;
     cursor: not-allowed;
   }
 
-  .clear-btn svg {
-    width: 20px;
-    height: 20px;
+  .action-btn.danger {
+    border-color: rgba(229, 9, 20, 0.2);
+    color: #e57373;
+  }
+
+  .action-btn.danger:hover:not(:disabled) {
+    background: rgba(229, 9, 20, 0.1);
+    border-color: rgba(229, 9, 20, 0.35);
+  }
+
+  .action-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .btn-spinner {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border: 2px solid rgba(255, 255, 255, 0.3);
     border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
 
-  /* TV Styles */
+  /* Wider screens */
   @media (min-width: 960px) {
     .settings-page {
       padding: 40px 60px;
@@ -429,16 +622,11 @@
     }
 
     .info-row {
-      padding: 18px 24px;
+      padding: 16px 0;
     }
 
     .info-label, .info-value {
       font-size: 1.05rem;
-    }
-
-    .clear-btn {
-      padding: 18px 28px;
-      font-size: 1.1rem;
     }
   }
 </style>

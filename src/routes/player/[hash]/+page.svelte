@@ -5,7 +5,6 @@
   import { browser } from "$app/environment";
   import { streamStore } from "$lib/stores/stream.svelte";
   import { searchSubtitles, startStream, downloadSubtitle, checkStreamReady, serveSubtitle, recordView, streamStart, streamHeartbeat, streamEnd, type Subtitle } from "$lib/api/commands";
-  import { makeFocusable } from "$lib/utils/tvNavigation";
   import { platform } from "@tauri-apps/plugin-os";
   import { playVideo } from "tauri-plugin-videoplayer-api";
 
@@ -184,8 +183,10 @@
       actualStreamUrl = urlStreamUrl || streamStore.streamUrl;
     }
 
-    // Start polling for stream stats
-    streamStore.beginStatsPolling(hash.toLowerCase());
+    // Start polling for stream stats (skip for live streams — no torrent)
+    if (hash !== "live") {
+      streamStore.beginStatsPolling(hash.toLowerCase());
+    }
 
     // On Android, use native ExoPlayer for full codec support (HEVC/x265)
     // 2-phase buffer check + parallel subtitle loading
@@ -280,7 +281,6 @@
 
     // Set initial focus - on cancel button if loading, otherwise center play
     setTimeout(() => {
-      makeFocusable(); // Refresh focusable elements
       const cancelBtn = document.querySelector('.cancel-btn') as HTMLElement;
       const centerPlay = document.querySelector('.center-play') as HTMLElement;
       if (cancelBtn && (isStartingStream || isBuffering)) {
@@ -498,24 +498,24 @@
         }
         break;
       case "ArrowLeft":
-        // If on progress bar, seek. Otherwise let spatial navigation handle it.
+        // If on progress bar, seek.
         if (target.classList.contains('progress-container') || target.classList.contains('seek-track')) {
           e.preventDefault();
           seek(-10);
         }
         break;
       case "ArrowRight":
-        // If on progress bar, seek. Otherwise let spatial navigation handle it.
+        // If on progress bar, seek.
         if (target.classList.contains('progress-container') || target.classList.contains('seek-track')) {
           e.preventDefault();
           seek(10);
         }
         break;
       case "ArrowUp":
-        // Let spatial navigation handle it
+        // No-op on desktop
         break;
       case "ArrowDown":
-        // Let spatial navigation handle it
+        // No-op on desktop
         break;
     }
   }

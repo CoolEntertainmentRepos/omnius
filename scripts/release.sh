@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Release script for Streamer
+# Release script for Omnius
 # Usage: ./scripts/release.sh [major|minor|patch|VERSION]
 # Examples:
 #   ./scripts/release.sh patch   # 1.0.0 -> 1.0.1
@@ -72,7 +72,7 @@ if [ -z "$VERSION" ]; then
 fi
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Building Streamer v${VERSION}${NC}"
+echo -e "${GREEN}  Building Omnius v${VERSION}${NC}"
 echo -e "${GREEN}========================================${NC}"
 
 # Check if gh is installed
@@ -141,11 +141,11 @@ pnpm tauri android build --target armv7 2>&1 | tail -5
 
 APK_ARM="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 if [ -f "$APK_ARM" ]; then
-    SIGNED_ARM="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm.apk"
+    SIGNED_ARM="$RELEASE_DIR/Omnius-android-tv-arm.apk"
     $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
         --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
         --out "$SIGNED_ARM" "$APK_ARM"
-    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm.apk${NC}"
+    echo -e "${GREEN}✓ Built: Omnius-android-tv-arm.apk${NC}"
     RELEASE_FILES+=("$SIGNED_ARM")
 fi
 
@@ -155,11 +155,11 @@ pnpm tauri android build --target aarch64 2>&1 | tail -5
 
 APK_ARM64="$PROJECT_DIR/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 if [ -f "$APK_ARM64" ]; then
-    SIGNED_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-android-tv-arm64.apk"
+    SIGNED_ARM64="$RELEASE_DIR/Omnius-android-tv-arm64.apk"
     $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
         --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
         --out "$SIGNED_ARM64" "$APK_ARM64"
-    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-android-tv-arm64.apk${NC}"
+    echo -e "${GREEN}✓ Built: Omnius-android-tv-arm64.apk${NC}"
     RELEASE_FILES+=("$SIGNED_ARM64")
 fi
 
@@ -172,7 +172,7 @@ echo -e "\n${BLUE}=== Building Desktop Apps ===${NC}"
 export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/streamer.key)
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
-GITHUB_REPO_URL="https://github.com/flakerim/Streamer/releases/download/v${VERSION}"
+GITHUB_REPO_URL="https://github.com/CoolEntertainmentRepos/omnius/releases/download/v${VERSION}"
 
 # Manifest platform entries (will be built up as we go)
 DARWIN_AARCH64_ENTRY=""
@@ -187,19 +187,19 @@ TARGZ_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/b
 SIG_ARM64=$(find "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -name "*.tar.gz.sig" 2>/dev/null | head -1)
 
 if [ -f "$DMG_ARM64" ]; then
-    MACOS_ARM64="$RELEASE_DIR/Streamer-v${VERSION}-macos-arm64.dmg"
+    MACOS_ARM64="$RELEASE_DIR/Omnius-macos-arm64.dmg"
     cp "$DMG_ARM64" "$MACOS_ARM64"
-    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-macos-arm64.dmg${NC}"
+    echo -e "${GREEN}✓ Built: Omnius-macos-arm64.dmg${NC}"
     RELEASE_FILES+=("$MACOS_ARM64")
 fi
 
 if [ -f "$TARGZ_ARM64" ] && [ -f "$SIG_ARM64" ]; then
-    MACOS_ARM64_UPDATE="$RELEASE_DIR/Streamer-v${VERSION}-macos-arm64.app.tar.gz"
+    MACOS_ARM64_UPDATE="$RELEASE_DIR/Omnius-macos-arm64.app.tar.gz"
     cp "$TARGZ_ARM64" "$MACOS_ARM64_UPDATE"
     RELEASE_FILES+=("$MACOS_ARM64_UPDATE")
     SIG_CONTENT=$(cat "$SIG_ARM64")
-    DARWIN_AARCH64_ENTRY="\"darwin-aarch64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-arm64.app.tar.gz\"}"
-    echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-arm64.app.tar.gz${NC}"
+    DARWIN_AARCH64_ENTRY="\"darwin-aarch64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Omnius-macos-arm64.app.tar.gz\"}"
+    echo -e "${GREEN}✓ Built updater: Omnius-macos-arm64.app.tar.gz${NC}"
 fi
 
 # macOS (Intel)
@@ -211,19 +211,19 @@ TARGZ_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bund
 SIG_X64=$(find "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -name "*.tar.gz.sig" 2>/dev/null | head -1)
 
 if [ -f "$DMG_X64" ]; then
-    MACOS_X64="$RELEASE_DIR/Streamer-v${VERSION}-macos-x64.dmg"
+    MACOS_X64="$RELEASE_DIR/Omnius-macos-x64.dmg"
     cp "$DMG_X64" "$MACOS_X64"
-    echo -e "${GREEN}✓ Built: Streamer-v${VERSION}-macos-x64.dmg${NC}"
+    echo -e "${GREEN}✓ Built: Omnius-macos-x64.dmg${NC}"
     RELEASE_FILES+=("$MACOS_X64")
 fi
 
 if [ -f "$TARGZ_X64" ] && [ -f "$SIG_X64" ]; then
-    MACOS_X64_UPDATE="$RELEASE_DIR/Streamer-v${VERSION}-macos-x64.app.tar.gz"
+    MACOS_X64_UPDATE="$RELEASE_DIR/Omnius-macos-x64.app.tar.gz"
     cp "$TARGZ_X64" "$MACOS_X64_UPDATE"
     RELEASE_FILES+=("$MACOS_X64_UPDATE")
     SIG_CONTENT=$(cat "$SIG_X64")
-    DARWIN_X86_64_ENTRY="\"darwin-x86_64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Streamer-v${VERSION}-macos-x64.app.tar.gz\"}"
-    echo -e "${GREEN}✓ Built updater: Streamer-v${VERSION}-macos-x64.app.tar.gz${NC}"
+    DARWIN_X86_64_ENTRY="\"darwin-x86_64\":{\"signature\":\"$SIG_CONTENT\",\"url\":\"$GITHUB_REPO_URL/Omnius-macos-x64.app.tar.gz\"}"
+    echo -e "${GREEN}✓ Built updater: Omnius-macos-x64.app.tar.gz${NC}"
 fi
 
 # Generate latest.json manifest for Tauri Updater
@@ -247,7 +247,7 @@ if [ -n "$PLATFORMS_JSON" ]; then
     cat > "$RELEASE_DIR/latest.json" <<EOF
 {
   "version": "${VERSION}",
-  "notes": "Streamer v${VERSION}",
+  "notes": "Omnius v${VERSION}",
   "pub_date": "${PUB_DATE}",
   "platforms": {
     $PLATFORMS_JSON
@@ -287,16 +287,16 @@ git push origin main --tags
 echo -e "${YELLOW}Creating GitHub release...${NC}"
 
 RELEASE_NOTES=$(cat <<EOF
-## Streamer v${VERSION}
+## Omnius v${VERSION}
 
 ### Downloads
 
 | Platform | Architecture | File |
 |----------|--------------|------|
-| Android TV | ARM (32-bit) | \`Streamer-v${VERSION}-android-tv-arm.apk\` |
-| Android TV | ARM64 (64-bit) | \`Streamer-v${VERSION}-android-tv-arm64.apk\` |
-| macOS | Apple Silicon | \`Streamer-v${VERSION}-macos-arm64.dmg\` |
-| macOS | Intel | \`Streamer-v${VERSION}-macos-x64.dmg\` |
+| Android TV | ARM (32-bit) | \`Omnius-android-tv-arm.apk\` |
+| Android TV | ARM64 (64-bit) | \`Omnius-android-tv-arm64.apk\` |
+| macOS | Apple Silicon | \`Omnius-macos-arm64.dmg\` |
+| macOS | Intel | \`Omnius-macos-x64.dmg\` |
 
 ### Android TV Installation
 
@@ -306,22 +306,23 @@ RELEASE_NOTES=$(cat <<EOF
 2. Enable "Install from unknown sources" in Settings
 3. Install via file manager or ADB:
    \`\`\`bash
-   adb install Streamer-v${VERSION}-android-tv-arm64.apk
+   adb install Omnius-android-tv-arm64.apk
    \`\`\`
 
 ### macOS Installation
 
 1. Download the DMG for your Mac
-2. Open the DMG and drag Streamer to Applications
+2. Open the DMG and drag Omnius to Applications
 3. First launch: Right-click > Open (to bypass Gatekeeper)
 
 ### Features
 
-- Stream movies from YTS on Android TV
+- Stream movies and TV series on Android TV
 - Netflix-style browsing with D-pad navigation
-- In-app video player with controls
+- Native ExoPlayer with subtitle support
 - Subtitle support (60+ languages) via SubDL
 - Auto-load subtitles based on language preference
+- Live TV channels
 - Auto-update checker
 
 ### Requirements
@@ -336,7 +337,7 @@ gh release delete "v${VERSION}" --yes 2>/dev/null || true
 
 # Create new release with all files
 gh release create "v${VERSION}" \
-    --title "Streamer v${VERSION}" \
+    --title "Omnius v${VERSION}" \
     --notes "$RELEASE_NOTES" \
     "${RELEASE_FILES[@]}"
 

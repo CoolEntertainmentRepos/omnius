@@ -14,8 +14,32 @@ import type {
   StreamStats,
 } from "./types";
 
-// Local torrent-server API - change this to your server URL
-export const API_URL = 'https://api.omnius.lol';
+// Local torrent-server API - configurable via Settings
+const DEFAULT_API_URL = 'https://api.omnius.lol';
+
+export function getApiUrl(): string {
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem('omnius_api_url');
+    if (saved) return saved.replace(/\/+$/, ''); // trim trailing slashes
+  }
+  return DEFAULT_API_URL;
+}
+
+export function setApiUrl(url: string): void {
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (trimmed) {
+    localStorage.setItem('omnius_api_url', trimmed);
+  } else {
+    localStorage.removeItem('omnius_api_url');
+  }
+}
+
+export function getDefaultApiUrl(): string {
+  return DEFAULT_API_URL;
+}
+
+// For backwards compat - computed on each access
+export const API_URL = DEFAULT_API_URL;
 
 /**
  * Fetch a list of movies from LOCAL torrent-server (cached)
@@ -37,7 +61,7 @@ export async function listMovies(params: ListMoviesParams, forceRefresh: boolean
       if (params.order_by) queryParams.set('order_by', params.order_by);
       if (params.year) queryParams.set('year', String(params.year));
 
-      const response = await fetch(`${API_URL}/api/v2/list_movies.json?${queryParams}`);
+      const response = await fetch(`${getApiUrl()}/api/v2/list_movies.json?${queryParams}`);
       const data = await response.json();
       return data.data as MovieListData;
     },
@@ -81,7 +105,7 @@ export async function getMovieDetails(
       // Try local server first
       try {
         console.log("[getMovieDetails] Trying LOCAL server, movieId:", movieId);
-        const response = await fetch(`${API_URL}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
+        const response = await fetch(`${getApiUrl()}/api/v2/movie_details.json?movie_id=${movieId}&with_cast=${withCast}&with_images=${withImages}`);
         if (response.ok) {
           const data = await response.json();
           if (data.data?.movie) {
@@ -123,7 +147,7 @@ export async function getMovieSuggestions(movieId: number, forceRefresh: boolean
     CACHE_TTL.SUGGESTIONS,
     async () => {
       console.log("[getMovieSuggestions] Fetching from LOCAL server, movieId:", movieId);
-      const response = await fetch(`${API_URL}/api/v2/movie_suggestions.json?movie_id=${movieId}`);
+      const response = await fetch(`${getApiUrl()}/api/v2/movie_suggestions.json?movie_id=${movieId}`);
       if (!response.ok) {
         console.warn("[getMovieSuggestions] Failed:", response.status);
         return [];
@@ -143,7 +167,7 @@ export async function getMovieSuggestions(movieId: number, forceRefresh: boolean
 export async function getFranchiseMovies(movieId: number): Promise<Movie[]> {
   try {
     console.log("[getFranchiseMovies] Fetching for movieId:", movieId);
-    const response = await fetch(`${API_URL}/api/v2/franchise_movies.json?movie_id=${movieId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/franchise_movies.json?movie_id=${movieId}`);
     if (!response.ok) {
       console.warn("[getFranchiseMovies] Failed:", response.status);
       return [];
@@ -461,7 +485,7 @@ export async function getLocalRatings(imdbCodes: string[]): Promise<Record<strin
   if (imdbCodes.length === 0) return {};
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/get_ratings`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/get_ratings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(imdbCodes),
@@ -488,7 +512,7 @@ export async function syncMovieToLocal(movie: Movie | MovieDetails): Promise<{ s
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/sync_movie`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/sync_movie`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imdb_code: movie.imdb_code }),
@@ -521,7 +545,7 @@ export async function syncMovieToLocal(movie: Movie | MovieDetails): Promise<{ s
  */
 export async function refreshMovieData(movieId: number): Promise<void> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/refresh_movie`, {
+    const response = await fetch(`${getApiUrl()}/api/v2/refresh_movie`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ movie_id: movieId }),
@@ -540,7 +564,7 @@ export async function refreshMovieData(movieId: number): Promise<void> {
  */
 export async function syncMoviesToLocal(movies: Movie[]): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/sync_movies`, {
+    await fetch(`${getApiUrl()}/api/v2/sync_movies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(movies),
@@ -579,7 +603,7 @@ export interface CuratedList {
  */
 export async function getCuratedLists(): Promise<CuratedList[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/curated_lists.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/curated_lists.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -595,7 +619,7 @@ export async function getCuratedLists(): Promise<CuratedList[]> {
  */
 export async function getCuratedList(slug: string): Promise<CuratedList | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/curated_list.json?slug=${slug}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/curated_list.json?slug=${slug}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -628,7 +652,7 @@ export async function listSeries(params: ListSeriesParams = {}): Promise<SeriesL
     if (params.year) queryParams.set('year', params.year.toString());
     if (params.maximum_year) queryParams.set('maximum_year', params.maximum_year.toString());
 
-    const response = await fetch(`${API_URL}/api/v2/list_series.json?${queryParams}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_series.json?${queryParams}`);
     if (!response.ok) throw new Error('Failed to fetch series');
 
     const data = await response.json();
@@ -644,7 +668,7 @@ export async function listSeries(params: ListSeriesParams = {}): Promise<SeriesL
  */
 export async function getSeriesDetails(seriesId: number): Promise<Series | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/series_details.json?series_id=${seriesId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/series_details.json?series_id=${seriesId}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -660,7 +684,7 @@ export async function getSeriesDetails(seriesId: number): Promise<Series | null>
  */
 export async function getSeasonEpisodes(seriesId: number, season: number): Promise<Episode[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/season_episodes.json?series_id=${seriesId}&season=${season}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/season_episodes.json?series_id=${seriesId}&season=${season}`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -680,7 +704,7 @@ export async function searchSeries(query: string, page: number = 1, limit: numbe
   queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
 
-  const response = await fetch(`${API_URL}/api/v2/list_series.json?${queryParams}`);
+  const response = await fetch(`${getApiUrl()}/api/v2/list_series.json?${queryParams}`);
   const data = await response.json();
   return data.data as SeriesListData;
 }
@@ -734,7 +758,7 @@ export interface HomeData {
  */
 export async function getHomeData(): Promise<HomeData> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/home.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/home.json`);
     if (!response.ok) throw new Error('Failed to fetch home data');
 
     const data = await response.json();
@@ -762,7 +786,7 @@ export interface TorrentStats {
  */
 export async function getTorrentStats(hash: string): Promise<TorrentStats | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/torrent_stats?hash=${hash}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/torrent_stats?hash=${hash}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -781,7 +805,7 @@ export async function getMultipleTorrentStats(hashes: string[]): Promise<Record<
 
   try {
     const params = hashes.map(h => `hashes=${h}`).join('&');
-    const response = await fetch(`${API_URL}/api/v2/torrent_stats?${params}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/torrent_stats?${params}`);
     if (!response.ok) return {};
 
     const data = await response.json();
@@ -804,7 +828,7 @@ export interface RecordViewParams {
 
 export async function recordView(params: RecordViewParams): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/view`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/view`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -843,7 +867,7 @@ export interface StreamStartParams {
 
 export async function streamStart(params: StreamStartParams): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/start`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -862,7 +886,7 @@ export async function streamStart(params: StreamStartParams): Promise<void> {
 // Stream tracking - Heartbeat (call every 30-60 seconds while streaming)
 export async function streamHeartbeat(): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/heartbeat`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -877,7 +901,7 @@ export async function streamHeartbeat(): Promise<void> {
 // Stream tracking - End
 export async function streamEnd(): Promise<void> {
   try {
-    await fetch(`${API_URL}/api/v2/analytics/stream/end`, {
+    await fetch(`${getApiUrl()}/api/v2/analytics/stream/end`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -898,7 +922,7 @@ export async function getTopMovies(days: number = 7, genre?: string, limit: numb
     });
     if (genre) params.set('genre', genre);
 
-    const response = await fetch(`${API_URL}/api/v2/analytics/top-movies?${params}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/analytics/top-movies?${params}`);
     if (!response.ok) return [];
 
     return await response.json();
@@ -915,7 +939,7 @@ export async function getTopMovies(days: number = 7, genre?: string, limit: numb
  */
 export async function getComingSoonMovies(): Promise<Movie[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/list_movies.json?status=coming_soon&limit=20`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_movies.json?status=coming_soon&limit=20`);
     if (!response.ok) return [];
     const data = await response.json();
     return data.data?.movies || [];
@@ -933,7 +957,7 @@ export async function checkAvailability(imdbCodes: string[]): Promise<Record<str
   if (imdbCodes.length === 0) return {};
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/check_availability?imdb_codes=${imdbCodes.join(',')}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/check_availability?imdb_codes=${imdbCodes.join(',')}`);
     if (!response.ok) return {};
     const data = await response.json();
     return data.data || {};
@@ -959,7 +983,7 @@ export async function listChannels(params: ListChannelsParams = {}): Promise<Cha
     if (params.category) queryParams.set('category', params.category);
     if (params.query_term) queryParams.set('query_term', params.query_term);
 
-    const response = await fetch(`${API_URL}/api/v2/list_channels.json?${queryParams}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/list_channels.json?${queryParams}`);
     if (!response.ok) throw new Error('Failed to fetch channels');
 
     const data = await response.json();
@@ -975,7 +999,7 @@ export async function listChannels(params: ListChannelsParams = {}): Promise<Cha
  */
 export async function getChannelDetails(channelId: string): Promise<Channel | null> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_details.json?channel_id=${channelId}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_details.json?channel_id=${channelId}`);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -991,7 +1015,7 @@ export async function getChannelDetails(channelId: string): Promise<Channel | nu
  */
 export async function getChannelCountries(): Promise<ChannelCountry[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_countries.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_countries.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1007,7 +1031,7 @@ export async function getChannelCountries(): Promise<ChannelCountry[]> {
  */
 export async function getChannelCategories(): Promise<ChannelCategory[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channel_categories.json`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channel_categories.json`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1023,7 +1047,7 @@ export async function getChannelCategories(): Promise<ChannelCategory[]> {
  */
 export async function getChannelsByCountry(country: string, limit: number = 50): Promise<Channel[]> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/channels_by_country.json?country=${country}&limit=${limit}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/channels_by_country.json?country=${country}&limit=${limit}`);
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -1043,7 +1067,7 @@ export async function searchChannels(query: string, page: number = 1, limit: num
   queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
 
-  const response = await fetch(`${API_URL}/api/v2/list_channels.json?${queryParams}`);
+  const response = await fetch(`${getApiUrl()}/api/v2/list_channels.json?${queryParams}`);
   const data = await response.json();
   return data.data as ChannelListData;
 }
@@ -1065,7 +1089,7 @@ export interface UnifiedSearchResponse {
  */
 export async function unifiedSearch(query: string, limit: number = 10): Promise<UnifiedSearchResponse> {
   try {
-    const response = await fetch(`${API_URL}/api/v2/search.json?query=${encodeURIComponent(query)}&limit=${limit}`);
+    const response = await fetch(`${getApiUrl()}/api/v2/search.json?query=${encodeURIComponent(query)}&limit=${limit}`);
     if (!response.ok) throw new Error('Search failed');
 
     const data = await response.json();

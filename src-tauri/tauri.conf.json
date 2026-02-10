@@ -40,7 +40,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/CoolEntertainmentRepos/omnius/releases/latest/download/latest.json"
+        "https://github.com/OmniusRepos/omnius-releases/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBGRjRCQjQ1ODU0NDk3M0UKUldRK2wwU0ZSYnYwRCt1bWQxOXRNWFY1cWJVb2Zzaml5STlTOFlrY2tyMkc1d0ZjNXV1MDhSSkoK"
     }

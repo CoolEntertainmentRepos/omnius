@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
-  import { listMovies, listSeries, API_URL } from "$lib/api/commands";
+  import { listMovies, listSeries, getApiUrl } from "$lib/api/commands";
   import type { Movie, Series, Channel, MovieListData } from "$lib/api/types";
   import MovieGrid from "./MovieGrid.svelte";
   import SeriesGrid from "./SeriesGrid.svelte";
@@ -227,7 +227,7 @@
       const episodes = Array.from(episodeMap.values());
       console.log(`[Search] Grouped into ${episodes.length} episodes`);
 
-      const response = await fetch(`${API_URL}/api/v2/sync_series`, {
+      const response = await fetch(`${getApiUrl()}/api/v2/sync_series`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...fullSeries, episodes })
@@ -268,7 +268,7 @@
 
     try {
       // Call the server to sync this movie from YTS
-      const response = await fetch(`${API_URL}/api/v2/sync_movie`, {
+      const response = await fetch(`${getApiUrl()}/api/v2/sync_movie`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imdb_code: movie.imdb_code })
